@@ -7,9 +7,9 @@ import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
-import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert } from 'lucide-react';
+import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, ArrowBigRight, ArrowBigRightDashIcon, Star } from 'lucide-react';
 
-const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง 1 วัน', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
+const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
 const durationOptions = [15, 30, 45, 60];
@@ -56,8 +56,20 @@ function quotaToDisplay(quota: QuotaSnapshot): QuotaStatus {
     title: 'พร้อมใช้งาน',
     statusType: 'ok',
     remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-    resetText: quota.note || 'นับแยกต่อผู้ใช้จากฝั่ง server แล้ว',
+    resetText: quota.note || '',
   };
+}
+
+function buildExportFileBase() {
+  const now = new Date();
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '-',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+  ].join('');
 }
 
 function getTopicDetailConfig(topic: string) {
@@ -74,7 +86,7 @@ function getTopicDetailConfig(topic: string) {
         placeholder: 'เช่น แต่งหน้าไปเรียน, ทำกาแฟส้ม, ตัดคลิปใน CapCut',
         helper: 'บอกสิ่งที่อยากสอนหรือขั้นตอนหลักที่อยากให้คนดูทำตาม',
       };
-    case 'เล่าเรื่อง 1 วัน':
+    case 'เล่าเรื่อง':
       return {
         label: 'วันนี้เกี่ยวกับอะไร',
         placeholder: 'เช่น 1 วันของแม่ค้าออนไลน์, 1 วันเตรียมสอบ, 1 วันเที่ยวเชียงใหม่',
@@ -191,16 +203,74 @@ export default function PreProduction() {
     }
   };
 
-  const handleDownload = () => {
-    if (!script) return;
-    const exportData = { brief: prompt, result: script };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const downloadFile = (content: string, fileName: string, type: string) => {
+    const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${script.title.replace(/[^a-z0-9ก-ฮ]/gi, '_') || 'preproduction_script'}.json`;
+    link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTxt = () => {
+    if (!script) return;
+
+    const lines = [
+      `ชื่อคลิป: ${script.title}`,
+      `สรุป: ${prompt}`,
+      '',
+      ...script.shots
+        .sort((a, b) => a.order_index - b.order_index)
+        .flatMap((shot) => [
+          `ช็อต ${shot.order_index}`,
+          `ประเภท: ${getShotTypeLabel(shot.shot_type)}`,
+          `ระยะเวลา: ${shot.duration_seconds} วินาที`,
+          `พูด / ใจความ: ${shot.script_text}`,
+          `ต้องถ่ายอะไร: ${shot.visual_description}`,
+          '',
+        ]),
+    ];
+
+    downloadFile(
+      lines.join('\n'),
+      `${buildExportFileBase()}.txt`,
+      'text/plain;charset=utf-8',
+    );
+  };
+
+  const formatSrtTimestamp = (totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = Math.floor(totalSeconds % 60);
+    const milliseconds = Math.round((totalSeconds - Math.floor(totalSeconds)) * 1000);
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+  };
+
+  const handleDownloadSrt = () => {
+    if (!script) return;
+
+    let currentTime = 0;
+    const srt = script.shots
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((shot, index) => {
+        const start = currentTime;
+        const end = currentTime + shot.duration_seconds;
+        currentTime = end;
+        return [
+          String(index + 1),
+          `${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(end)}`,
+          shot.script_text,
+          '',
+        ].join('\n');
+      })
+      .join('\n');
+
+    downloadFile(
+      srt,
+      `${buildExportFileBase()}.srt`,
+      'application/x-subrip;charset=utf-8',
+    );
   };
 
   const renderOptionRow = ({ label, options, value, customValue, onSelect, onCustomChange, customPlaceholder }: OptionFieldProps) => {
@@ -217,8 +287,8 @@ export default function PreProduction() {
               variant={value === option ? 'default' : 'outline'}
               className={
                 value === option
-                  ? 'h-11 rounded-full border-amber-300 bg-gradient-to-r from-orange-400 to-amber-300 px-4 text-slate-950 shadow-lg shadow-orange-500/20'
-                  : 'h-11 rounded-full border-white/10 bg-white/6 px-4 text-slate-200 hover:bg-white/12'
+                  ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20'
+                  : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'
               }
               onClick={() => onSelect(option)}
             >
@@ -230,8 +300,8 @@ export default function PreProduction() {
             variant={usingCustom ? 'default' : 'outline'}
             className={
               usingCustom
-                ? 'h-11 rounded-full border-emerald-300 bg-emerald-300 px-4 text-slate-950 shadow-lg shadow-emerald-500/20'
-                : 'h-11 rounded-full border-white/10 bg-white/6 px-4 text-slate-200 hover:bg-white/12'
+                ? 'h-11 rounded-full border-violet-300/35 bg-[#6d5bd0] px-4 text-white shadow-md shadow-violet-950/20'
+                : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'
             }
             onClick={() => onSelect(customValue.trim() || 'อื่น ๆ')}
           >
@@ -247,7 +317,7 @@ export default function PreProduction() {
               onSelect(next.trim() || 'อื่น ๆ');
             }}
             placeholder={customPlaceholder}
-            className="h-12 rounded-2xl border-emerald-300/50 bg-emerald-300/10 px-4 text-white placeholder:text-emerald-100/50 focus-visible:border-emerald-200 focus-visible:ring-emerald-200/30"
+            className="h-12 rounded-2xl border-fuchsia-300/35 bg-fuchsia-400/10 px-4 text-white placeholder:text-violet-100/55 focus-visible:border-fuchsia-200 focus-visible:ring-fuchsia-200/30"
           />
         ) : null}
       </div>
@@ -256,60 +326,75 @@ export default function PreProduction() {
 
   return (
     <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-700">
-      <Card className="overflow-hidden border-white/10 bg-slate-950/70 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
-        <CardHeader className="border-b border-white/8 bg-gradient-to-br from-white/6 to-transparent pb-6">
-          <div className="mb-4 flex flex-wrap gap-3">
-            <Button
-              type="button"
-              variant={mode === 'brief' ? 'default' : 'outline'}
-              className={mode === 'brief' ? 'rounded-full border-amber-300 bg-gradient-to-r from-orange-400 to-amber-300 px-5 text-slate-950' : 'rounded-full border-white/10 bg-white/6 px-5 text-slate-200'}
-              onClick={() => setMode('brief')}
-            >
-              <WandSparkles className="mr-2 h-4 w-4" />
-              ให้ระบบช่วยคิดสคริปต์
-            </Button>
-            <Button
-              type="button"
-              variant={mode === 'script' ? 'default' : 'outline'}
-              className={mode === 'script' ? 'rounded-full border-amber-300 bg-gradient-to-r from-orange-400 to-amber-300 px-5 text-slate-950' : 'rounded-full border-white/10 bg-white/6 px-5 text-slate-200'}
-              onClick={() => setMode('script')}
-            >
-              <Scissors className="mr-2 h-4 w-4" />
-              มีสคริปต์อยู่แล้ว ให้แตกช็อต
-            </Button>
+      <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-cyan-300/35 bg-slate-900/85 text-white shadow-lg shadow-indigo-950/30' : 'border border-violet-300/35 bg-slate-900/85 text-white shadow-lg shadow-violet-950/30'}`}>
+        <div className="flex items-start gap-3">
+          <div className={`rounded-2xl p-2 ${quotaStatus.statusType === 'ok' ? 'bg-cyan-300/20 text-cyan-50' : 'bg-violet-300/20 text-violet-50'}`}>
+            <TriangleAlert className="h-5 w-5" />
           </div>
-          <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">
-            {mode === 'brief' ? 'กรอกข้อมูลเพื่อสร้างสคริปต์' : 'วางสคริปต์เพื่อแตกเป็น shot list'}
-          </CardTitle>
-          <p className="max-w-2xl text-base leading-7 text-slate-300">
-            {mode === 'brief'
-              ? 'เลือกประเภทคลิป แล้วเติมเรื่องที่อยากพูดให้ชัด ระบบจะช่วยคิดทั้งสคริปต์และสิ่งที่ต้องถ่าย'
-              : 'วางสคริปต์ที่มีอยู่แล้ว แล้วให้ระบบช่วยตัดเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น'}
-          </p>
-        </CardHeader>
-
-        <CardContent className="space-y-6 p-6 sm:p-8">
-          <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-emerald-300/20 bg-emerald-300/10' : 'border border-amber-300/20 bg-amber-300/10'}`}>
-            <div className="flex items-start gap-3">
-              <div className={`rounded-2xl p-2 ${quotaStatus.statusType === 'ok' ? 'bg-emerald-300/20 text-emerald-100' : 'bg-amber-300/20 text-amber-100'}`}>
-                <TriangleAlert className="h-5 w-5" />
-              </div>
-              <div className="space-y-2">
-                <p className={`text-sm font-bold tracking-wide ${quotaStatus.statusType === 'ok' ? 'text-emerald-50' : 'text-amber-50'}`}>สถานะโควต้า</p>
-                <p className="text-base font-semibold text-white">{quotaStatus.title}</p>
-                <p className={`text-sm leading-6 ${quotaStatus.statusType === 'ok' ? 'text-emerald-50/90' : 'text-amber-50/90'}`}>{quotaStatus.remainingText}</p>
-                <div className="flex flex-wrap gap-3 pt-1">
-                  <div className={`inline-flex items-center gap-2 rounded-full border bg-white/8 px-3 py-1.5 text-sm text-white ${quotaStatus.statusType === 'ok' ? 'border-emerald-200/20' : 'border-amber-200/20'}`}>
-                    <TimerReset className={`h-4 w-4 ${quotaStatus.statusType === 'ok' ? 'text-emerald-100' : 'text-amber-100'}`} />
-                    {quotaStatus.resetText}
-                  </div>
+          <div className="space-y-2">
+            <p className={`text-sm font-bold tracking-wide ${quotaStatus.statusType === 'ok' ? 'text-cyan-100' : 'text-violet-100'}`}>สถานะโควต้า</p>
+            <p className="text-2xl font-bold text-white">{quotaStatus.title}</p>
+            <p className={`text-base leading-7 ${quotaStatus.statusType === 'ok' ? 'text-cyan-50' : 'text-violet-50'}`}>{quotaStatus.remainingText}</p>
+              {quotaStatus.resetText ? (
+                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${quotaStatus.statusType === 'ok' ? 'bg-cyan-400/15 text-cyan-50' : 'bg-violet-400/15 text-violet-50'}`}>
+                  <TimerReset className="h-4 w-4" />
+                  {quotaStatus.resetText}
                 </div>
-              </div>
-            </div>
+              ) : null}
           </div>
-          <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-5">
-            <p className="mb-4 text-sm font-bold tracking-wide text-white">กรอก</p>
+        </div>
+      </div>
+      {/* Container: ในคอมใช้ sm:items-end เพื่อให้ฐานปุ่มกดลงมาชิดขอบล่างพอดี */}
+      <div className={`
+        flex flex-col gap-2 rounded-[2.5rem] bg-[#2d324a]/50 p-2 
+        sm:flex-row sm:flex-nowrap sm:items-end sm:justify-center sm:gap-0 sm:bg-transparent sm:p-0 sm:-mb-[4px] sm:w-full
+      `}>
+        
+        {/* ปุ่มที่ 1 */}
+        <button
+          type="button"
+          onClick={() => setMode('brief')}
+          className={`
+            relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:px-8
+            /* Shape: ตัดฐานตรงในคอม */
+            rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem]
+            /* ⚡️ เทคนิคแก้รอยต่อ: ขยับฐานปุ่มลงมาทับขอบล่าง 1px */
+            sm:-mb-[1px] 
+            ${mode === 'brief'
+              ? 'z-20 h-20 bg-[#62677f] text-white shadow-lg sm:h-25 sm:w-[49%] sm:shadow-none sm:border-none' 
+              : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[45%] sm:bg-[#3a4059] sm:border sm:border-white/8 sm:border-b-transparent'} 
+            sm:min-w-0 sm:flex-none ${mode === 'brief' ? 'sm:-mr-4' : ''}
+          `}
+        >
+          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'brief' ? 'bg-black/20' : 'bg-white/5 sm:bg-white/8'}`}>
+            <WandSparkles className="h-5 w-5 sm:h-6 sm:w-6" />
+          </span>
+          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">ให้ระบบช่วยคิดสคริปต์</span>
+        </button>
 
+        {/* ปุ่มที่ 2 */}
+        <button
+          type="button"
+          onClick={() => setMode('script')}
+          className={`
+            relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:px-8
+            rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem]
+            sm:-mb-[1px]
+            ${mode === 'script'
+              ? 'z-20 h-20 bg-[#62677f] text-white shadow-lg sm:h-25 sm:w-[55%] sm:-ml-4 sm:shadow-none sm:border-none'
+              : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[51%] sm:bg-[#3a4059] sm:border sm:border-white/8 sm:border-b-transparent'} 
+            sm:min-w-0 sm:flex-none
+          `}
+        >
+          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'script' ? 'bg-black/10' : 'bg-white/5 sm:bg-white/8'}`}>
+            <Scissors className="h-5 w-5 sm:h-6 sm:w-6" />
+          </span>
+          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">มีสคริปต์อยู่แล้ว ให้แตกช็อต</span>
+        </button>
+      </div>
+      <Card className="overflow-hidden border-white/12 bg-[#62677f] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+        <CardContent className="space-y-6 p-4 sm:p-5">
+          <div className="rounded-[1.5rem] border border-white/12 bg-[#4F536B] shadow-lg p-5">
             {mode === 'brief' ? (
               <div className="space-y-6">
                 {renderOptionRow({ label: 'ประเภทวิดีโอ', options: topicOptions, value: topic, customValue: customTopic, onSelect: setTopic, onCustomChange: setCustomTopic, customPlaceholder: 'เช่น พาชมห้อง, แต่งหน้าไปเรียน, สรุปข่าวสั้น' })}
@@ -319,7 +404,7 @@ export default function PreProduction() {
                     value={topicDetail}
                     onChange={(e) => setTopicDetail(e.target.value)}
                     placeholder={topicDetailConfig.placeholder}
-                    className="h-12 rounded-2xl border-white/10 bg-slate-900/50 px-4 text-white placeholder:text-slate-500"
+                    className="h-12 rounded-2xl border-white/12 bg-slate-900/55 px-4 text-white placeholder:text-slate-500"
                   />
                   <p className="text-sm leading-6 text-slate-400">{topicDetailConfig.helper}</p>
                 </div>
@@ -333,7 +418,7 @@ export default function PreProduction() {
                   value={existingScript}
                   onChange={(e) => setExistingScript(e.target.value)}
                   placeholder="วางสคริปต์ตรงนี้ ระบบจะช่วยตัดช็อตใหม่ให้ดูทันสมัยขึ้น พร้อมบอกว่าแต่ละช็อตควรถ่ายอะไร"
-                  className="min-h-56 rounded-[1.5rem] border-white/10 bg-slate-900/60 px-4 py-4 text-white placeholder:text-slate-500"
+                  className="min-h-56 rounded-[1.5rem] border-white/12 bg-slate-900/65 px-4 py-4 text-white placeholder:text-slate-500"
                 />
               </div>
             )}
@@ -346,7 +431,7 @@ export default function PreProduction() {
                     key={seconds}
                     type="button"
                     variant={durationSeconds === seconds ? 'default' : 'outline'}
-                    className={durationSeconds === seconds ? 'h-11 rounded-full border-sky-300 bg-sky-300 px-4 text-slate-950 shadow-lg shadow-sky-500/20' : 'h-11 rounded-full border-white/10 bg-white/6 px-4 text-slate-200 hover:bg-white/12'}
+                    className={durationSeconds === seconds ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20' : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'}
                     onClick={() => setDurationSeconds(seconds)}
                   >
                     <Clock3 className="mr-2 h-4 w-4" />
@@ -359,16 +444,17 @@ export default function PreProduction() {
             <Button
               onClick={handleGenerate}
               disabled={loading || (mode === 'script' && !existingScript.trim())}
-              className="mt-6 h-13 w-full rounded-2xl bg-gradient-to-r from-orange-400 via-amber-300 to-yellow-200 px-6 text-base font-bold text-slate-950 shadow-xl shadow-orange-500/20 hover:opacity-95"
+              className="mt-6 h-13 w-full rounded-2xl bg-gradient-to-r from-[#D271E6] to-amber-600 px-6 text-base font-bold text-white shadow-lg shadow-violet-950/20 hover:bg-[#7a68dc]"
             >
               {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}
               {mode === 'brief' ? 'สร้างสคริปต์และ shot list' : 'แตกเป็น shot list'}
             </Button>
           </div>
 
-          <div className="rounded-[1.5rem] border border-primary/20 bg-primary/5 p-5">
-            <p className="mb-3 text-sm font-bold tracking-wide text-white">สรุป</p>
-            <p className="text-base leading-7 text-white">{prompt}</p>
+          <div className="rounded-[1.5rem] bg-[#4F536B] shadow-lg p-5">
+            <p className="mb-3 text-xl font-bold tracking-wide text-white">สรุป :</p>
+            <div className="flex text-base items-start gap-3 text-white"><Star className="mt-1 h-4 w-4 text-cyan-200" />{prompt}</div>
+           
             <div className="mt-4 text-sm leading-7 text-slate-300">
               {mode === 'brief' ? (
                 effectiveDetail ? (
@@ -379,44 +465,50 @@ export default function PreProduction() {
               ) : (
                 <div className="flex items-start gap-3 text-white"><FileText className="mt-1 h-4 w-4 text-amber-200" /> ระบบจะอ่านสคริปต์เดิม แล้วแตกเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น</div>
               )}
-              <div className="mt-2 flex items-start gap-3 text-slate-200"><Camera className="mt-1 h-4 w-4 text-sky-200" /> แต่ละช็อตจะมีทั้งสิ่งที่ต้องพูด และสิ่งที่ต้องถ่ายแยกกันชัดเจน</div>
+              <div className="mt-2 flex items-start gap-3 text-slate-200"><Camera className="mt-1 h-4 w-4 text-cyan-200" /> แต่ละช็อตจะมีทั้งสิ่งที่ต้องพูด และสิ่งที่ต้องถ่ายแยกกันชัดเจน</div>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {script && (
-        <Card className="border-white/10 bg-slate-950/75 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+        <Card className="border-white/12 bg-slate-950/75 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
           <CardHeader className="flex flex-col gap-4 border-b border-white/8 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="mb-2 text-sm font-bold tracking-wide text-white">ผลลัพธ์</p>
-              <CardTitle className="text-2xl font-black tracking-tight text-white">{script.title}</CardTitle>
-              <p className="mt-2 text-sm leading-6 text-slate-300">ความยาวรวม {durationSeconds} วินาที พร้อมแผนการพูดและภาพที่ควรถ่ายในแต่ละช็อต</p>
+              <p className="ml-2 mb-2 text-sm font-bold tracking-wide text-white">ผลลัพธ์</p>
+              <CardTitle className="ml-2 text-2xl font-black tracking-tight text-white">{script.title}</CardTitle>
+              <p className="ml-2 mt-2 text-sm leading-6 text-slate-300">ความยาวรวม {durationSeconds} วินาที พร้อมแผนการพูดและภาพที่ควรถ่ายในแต่ละช็อต</p>
             </div>
-            <Button variant="outline" onClick={handleDownload} className="rounded-2xl border-white/10 bg-white/6 px-5 text-slate-100 hover:bg-white/12">
-              <Download className="mr-2 h-4 w-4" />
-              ดาวน์โหลด JSON
-            </Button>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="outline" onClick={handleDownloadTxt} className="rounded-2xl border-white/12 bg-white/6 px-5 text-slate-100 hover:bg-white/12">
+                <Download className="mr-2 h-4 w-4" />
+                ดาวน์โหลด TXT
+              </Button>
+              <Button variant="outline" onClick={handleDownloadSrt} className="rounded-2xl border-cyan-300/25 bg-cyan-400/10 px-5 text-cyan-50 hover:bg-cyan-400/16">
+                <Captions className="mr-2 h-4 w-4" />
+                ดาวน์โหลด SRT
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <ScrollArea className="h-[760px] px-4 py-4 sm:px-6">
               <div className="space-y-4 pb-4">
                 {script.shots.sort((a, b) => a.order_index - b.order_index).map((shot, i) => (
-                  <div key={i} className="rounded-[1.75rem] border border-white/10 bg-gradient-to-br from-white/8 to-white/3 p-5 shadow-lg shadow-black/10">
+                  <div key={i} className="rounded-[1.75rem] border border-white/12 bg-white/6 p-5 shadow-lg shadow-black/10">
                     <div className="mb-4 flex flex-wrap items-center gap-2">
-                      <Badge variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'} className={shot.shot_type === 'A-Roll' ? 'bg-orange-300 text-slate-950' : 'bg-sky-300 text-slate-950'}>
+                      <Badge variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'} className={shot.shot_type === 'A-Roll' ? 'bg-[#6d5bd0] text-white' : 'bg-[#A448BF] text-white'}>
                         {getShotTypeLabel(shot.shot_type)}
                       </Badge>
-                      <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-semibold text-slate-200">ช็อต #{shot.order_index}</span>
-                      <span className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs font-semibold text-amber-100">ประมาณ {shot.duration_seconds} วินาที</span>
+                      <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-xs font-semibold text-slate-200">ช็อต #{shot.order_index}</span>
+                      <span className="rounded-full border border-violet-300/20 bg-violet-400/12 px-3 py-1 text-xs font-semibold text-violet-100">ประมาณ {shot.duration_seconds} วินาที</span>
                     </div>
                     <div className="space-y-4">
                       <div className="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
                         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">พูด / ใจความ</p>
                         <p className="text-base leading-7 text-white">{shot.script_text}</p>
                       </div>
-                      <div className="rounded-2xl border border-sky-300/15 bg-sky-300/8 p-4">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-sky-100">ต้องถ่ายอะไร</p>
+                      <div className="rounded-2xl border border-cyan-300/20 bg-sky-300/8 p-4">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">ต้องถ่ายอะไร</p>
                         <p className="text-base leading-7 text-slate-100">{shot.visual_description}</p>
                       </div>
                     </div>
