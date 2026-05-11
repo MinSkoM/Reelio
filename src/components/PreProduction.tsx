@@ -7,14 +7,17 @@ import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
-import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, ArrowBigRight, ArrowBigRightDashIcon, Star } from 'lucide-react';
+import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen } from 'lucide-react';
 
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
 const durationOptions = [15, 30, 45, 60];
+const SHOT_PROGRESS_STORAGE_KEY = 'tudtor-shot-progress';
+const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
 type Mode = 'brief' | 'script';
+type PageView = 'editor' | 'shot-list' | 'library';
 
 type QuotaStatus = {
   title: string;
@@ -31,6 +34,15 @@ type OptionFieldProps = {
   onSelect: (next: string) => void;
   onCustomChange: (next: string) => void;
   customPlaceholder: string;
+};
+
+type LibraryItem = {
+  id: string;
+  title: string;
+  prompt: string;
+  mode: Mode;
+  createdAt: string;
+  script: GeneratedScript;
 };
 
 function quotaToDisplay(quota: QuotaSnapshot): QuotaStatus {
@@ -56,7 +68,7 @@ function quotaToDisplay(quota: QuotaSnapshot): QuotaStatus {
     title: 'พร้อมใช้งาน',
     statusType: 'ok',
     remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-    resetText: quota.note || '',
+    resetText: quota.note || 'งานที่สร้างจะถูกเก็บไว้ในคลังงานของเครื่องนี้',
   };
 }
 
@@ -70,6 +82,15 @@ function buildExportFileBase() {
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
   ].join('');
+}
+
+function buildShotStorageKey(script: GeneratedScript) {
+  return [
+    script.title,
+    ...script.shots
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((shot) => `${shot.order_index}:${shot.shot_type}:${shot.script_text}:${shot.visual_description}`),
+  ].join('|');
 }
 
 function getTopicDetailConfig(topic: string) {
@@ -119,7 +140,24 @@ function getTopicDetailConfig(topic: string) {
   }
 }
 
+function loadLibrary(): LibraryItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LIBRARY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLibrary(items: LibraryItem[]) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(items));
+}
+
 export default function PreProduction() {
+  const [pageView, setPageView] = useState<PageView>('editor');
   const [mode, setMode] = useState<Mode>('brief');
   const [topic, setTopic] = useState(topicOptions[0]);
   const [topicDetail, setTopicDetail] = useState('');
@@ -132,12 +170,19 @@ export default function PreProduction() {
   const [existingScript, setExistingScript] = useState('');
   const [loading, setLoading] = useState(false);
   const [script, setScript] = useState<GeneratedScript | null>(null);
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
+  const [activeLibraryItemId, setActiveLibraryItemId] = useState<string | null>(null);
+  const [completedShots, setCompletedShots] = useState<Record<number, boolean>>({});
   const [quotaStatus, setQuotaStatus] = useState<QuotaStatus>({
     title: 'กำลังเช็กโควต้า',
     statusType: 'ok',
     remainingText: 'กำลังดึงจำนวนคงเหลือของผู้ใช้คนนี้จาก server',
     resetText: 'ถ้าเพิ่งเปิดหน้าใหม่ รอสักครู่แล้วระบบจะอัปเดตให้เอง',
   });
+
+  useEffect(() => {
+    setLibraryItems(loadLibrary());
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -163,6 +208,36 @@ export default function PreProduction() {
   const effectiveTopic = customTopic.trim() || topic;
   const effectiveDetail = topicDetail.trim();
   const topicDetailConfig = useMemo(() => getTopicDetailConfig(topic), [topic]);
+  const shotStorageKey = useMemo(() => (script ? buildShotStorageKey(script) : ''), [script]);
+
+  useEffect(() => {
+    if (!script || !shotStorageKey || typeof window === 'undefined') {
+      setCompletedShots({});
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(SHOT_PROGRESS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const savedState = parsed?.[shotStorageKey];
+      setCompletedShots(savedState && typeof savedState === 'object' ? savedState : {});
+    } catch {
+      setCompletedShots({});
+    }
+  }, [script, shotStorageKey]);
+
+  useEffect(() => {
+    if (!script || !shotStorageKey || typeof window === 'undefined') return;
+
+    try {
+      const raw = window.localStorage.getItem(SHOT_PROGRESS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      parsed[shotStorageKey] = completedShots;
+      window.localStorage.setItem(SHOT_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
+    } catch {
+      // Keep checklist usable without storage.
+    }
+  }, [completedShots, script, shotStorageKey]);
 
   const prompt = useMemo(() => {
     if (mode === 'script') {
@@ -177,6 +252,18 @@ export default function PreProduction() {
     return parts.join(' · ');
   }, [mode, effectiveTopic, effectiveDetail, audience, tone, durationSeconds]);
 
+  const currentLibraryItem = useMemo(
+    () => libraryItems.find((item) => item.id === activeLibraryItemId) || null,
+    [libraryItems, activeLibraryItemId],
+  );
+
+  const persistLibraryItem = (item: LibraryItem) => {
+    const nextItems = [item, ...libraryItems.filter((entry) => entry.id !== item.id)];
+    setLibraryItems(nextItems);
+    saveLibrary(nextItems);
+    setActiveLibraryItemId(item.id);
+  };
+
   const handleGenerate = async () => {
     setLoading(true);
     try {
@@ -189,7 +276,20 @@ export default function PreProduction() {
             durationSeconds,
           })
         : await breakScriptIntoShots(existingScript, durationSeconds);
-      setScript(response.result);
+
+      const nextScript = response.result;
+      const libraryItem: LibraryItem = {
+        id: typeof window !== 'undefined' && window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}`,
+        title: nextScript.title,
+        prompt,
+        mode,
+        createdAt: new Date().toISOString(),
+        script: nextScript,
+      };
+
+      setScript(nextScript);
+      persistLibraryItem(libraryItem);
+      setPageView('shot-list');
       setQuotaStatus(quotaToDisplay(response.quota));
     } catch (error: any) {
       const details = error?.message || String(error);
@@ -201,6 +301,19 @@ export default function PreProduction() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const openLibraryItem = (item: LibraryItem) => {
+    setScript(item.script);
+    setActiveLibraryItemId(item.id);
+    setPageView('shot-list');
+  };
+
+  const toggleShotCompleted = (orderIndex: number) => {
+    setCompletedShots((current) => ({
+      ...current,
+      [orderIndex]: !current[orderIndex],
+    }));
   };
 
   const downloadFile = (content: string, fileName: string, type: string) => {
@@ -218,7 +331,7 @@ export default function PreProduction() {
 
     const lines = [
       `ชื่อคลิป: ${script.title}`,
-      `สรุป: ${prompt}`,
+      `สรุป: ${currentLibraryItem?.prompt || prompt}`,
       '',
       ...script.shots
         .sort((a, b) => a.order_index - b.order_index)
@@ -232,11 +345,7 @@ export default function PreProduction() {
         ]),
     ];
 
-    downloadFile(
-      lines.join('\n'),
-      `${buildExportFileBase()}.txt`,
-      'text/plain;charset=utf-8',
-    );
+    downloadFile(lines.join('\n'), `${buildExportFileBase()}.txt`, 'text/plain;charset=utf-8');
   };
 
   const formatSrtTimestamp = (totalSeconds: number) => {
@@ -266,11 +375,7 @@ export default function PreProduction() {
       })
       .join('\n');
 
-    downloadFile(
-      srt,
-      `${buildExportFileBase()}.srt`,
-      'application/x-subrip;charset=utf-8',
-    );
+    downloadFile(srt, `${buildExportFileBase()}.srt`, 'application/x-subrip;charset=utf-8');
   };
 
   const renderOptionRow = ({ label, options, value, customValue, onSelect, onCustomChange, customPlaceholder }: OptionFieldProps) => {
@@ -288,7 +393,7 @@ export default function PreProduction() {
               className={
                 value === option
                   ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20'
-                  : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'
+                  : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'
               }
               onClick={() => onSelect(option)}
             >
@@ -300,8 +405,8 @@ export default function PreProduction() {
             variant={usingCustom ? 'default' : 'outline'}
             className={
               usingCustom
-                ? 'h-11 rounded-full border-violet-300/35 bg-[#6d5bd0] px-4 text-white shadow-md shadow-violet-950/20'
-                : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'
+                ? 'h-11 rounded-full border-violet-300/35 bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20'
+                : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'
             }
             onClick={() => onSelect(customValue.trim() || 'อื่น ๆ')}
           >
@@ -324,77 +429,264 @@ export default function PreProduction() {
     );
   };
 
+  if (pageView === 'library') {
+    return (
+      <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-500">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setPageView('editor')}
+            className="rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            กลับไปสร้างงาน
+          </Button>
+          <div className="rounded-full bg-[#8d65e6] px-4 py-2 text-sm font-semibold text-[#efe7ff]">
+            มีทั้งหมด {libraryItems.length} งานในคลังของเครื่องนี้
+          </div>
+        </div>
+
+        <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+          <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
+            <p className="text-sm font-bold tracking-wide text-[#e7dcff]">คลังงาน</p>
+            <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">สคริปต์และช็อตลิสต์ที่สร้างไว้</CardTitle>
+            <p className="max-w-3xl text-base leading-7 text-slate-200">ทุกงานที่สร้างจากหน้านี้จะถูกเก็บไว้ในเครื่องของคุณ และสามารถเปิดกลับมาดูช็อตลิสต์ต่อได้จากหน้านี้</p>
+          </CardHeader>
+          <CardContent className="-mt-6 -mb-6 space-y-4 p-5 sm:p-8">
+            {libraryItems.length === 0 ? (
+              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-6 text-slate-200">
+                ยังไม่มีงานในคลัง ลองสร้างสคริปต์หรือช็อตลิสต์ก่อน แล้วงานจะมาอยู่ตรงนี้อัตโนมัติ
+              </div>
+            ) : (
+              libraryItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => openLibraryItem(item)}
+                  className="w-full rounded-[1.5rem] border border-white/10 bg-white/5 p-5 text-left transition-all duration-300 hover:bg-white/10"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge className="bg-[#8d65e7] text-white">{item.mode === 'brief' ? 'วางแผนทั้งหมด' : 'สร้างจากสคริปต์'}</Badge>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
+                          {new Date(item.createdAt).toLocaleString('th-TH')}
+                        </span>
+                      </div>
+                      <p className="text-2xl font-bold text-white">{item.title}</p>
+                      <p className="text-sm leading-6 text-slate-200">{item.prompt}</p>
+                    </div>
+                    <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
+                      <FolderOpen className="h-4 w-4" />
+                      เปิดดู {item.script.shots.length} ช็อต
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (pageView === 'shot-list' && script) {
+    const sortedShots = [...script.shots].sort((a, b) => a.order_index - b.order_index);
+    const completedCount = sortedShots.filter((shot) => completedShots[shot.order_index]).length;
+
+    return (
+      <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-500">
+        <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+          <CardHeader className="space-y-4 border-b border-white/10 bg-[#62677f] px-6 pb-6 pt-6 sm:px-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPageView('editor')}
+                  className="rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  กลับไปแก้ข้อมูล
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPageView('library')}
+                  className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+                >
+                  <Library className="mr-2 h-4 w-4" />
+                  ไปดูในคลัง
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDownloadTxt}
+                  className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  ดาวน์โหลด TXT
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDownloadSrt}
+                  className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+                >
+                  <Captions className="mr-2 h-4 w-4" />
+                  ดาวน์โหลด SRT
+                </Button>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
+                <CheckCircle2 className="h-4 w-4" />
+                ถ่ายเสร็จแล้ว {completedCount}/{sortedShots.length} ช็อต
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-bold tracking-wide text-[#e7dcff]">หน้าช็อตลิสต์</p>
+              <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">{script.title}</CardTitle>
+              <p className="max-w-3xl text-base leading-7 text-slate-200">{currentLibraryItem?.prompt || prompt}</p>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-4 p-6 sm:p-8">
+            {sortedShots.map((shot) => {
+              const isCompleted = Boolean(completedShots[shot.order_index]);
+              return (
+                <div
+                  key={shot.order_index}
+                  className={`rounded-[1.75rem] border p-5 transition-all duration-300 ${
+                    isCompleted
+                      ? 'border-white/10 bg-[#565b72] opacity-70'
+                      : 'border-white/10 bg-white/5 shadow-lg shadow-black/10'
+                  }`}
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'}
+                          className={shot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}
+                        >
+                          {getShotTypeLabel(shot.shot_type)}
+                        </Badge>
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
+                          ช็อต {shot.order_index}
+                        </span>
+                        <span className="rounded-full border border-violet-300/20 bg-[#8d65e7]/16 px-3 py-1 text-xs font-semibold text-[#efe7ff]">
+                          {shot.duration_seconds} วินาที
+                        </span>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#474c63]' : 'bg-[#2f334b]'}`}>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">รายละเอียดช็อต</p>
+                          <p className="text-base leading-7 text-white">{shot.visual_description}</p>
+                        </div>
+                        <div className={`border-1 rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#4f536b]' : 'bg-[#8d65e7]/14'}`}>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
+                          <p className="text-base leading-7 text-slate-100">{shot.script_text}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <label className={`inline-flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-300 ${
+                      isCompleted
+                        ? 'border-white/10 bg-[#474c63] text-white'
+                        : 'border-[#a98eff]/20 bg-[#8d65e7]/14 text-[#efe7ff]'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={isCompleted}
+                        onChange={() => toggleShotCompleted(shot.order_index)}
+                        className="h-4 w-4 rounded border-white/20 bg-transparent accent-[#6d5bd0]"
+                      />
+                      ถ่ายเสร็จแล้ว
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-700">
-      <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-cyan-300/35 bg-slate-900/85 text-white shadow-lg shadow-indigo-950/30' : 'border border-violet-300/35 bg-slate-900/85 text-white shadow-lg shadow-violet-950/30'}`}>
-        <div className="flex items-start gap-3">
-          <div className={`rounded-2xl p-2 ${quotaStatus.statusType === 'ok' ? 'bg-cyan-300/20 text-cyan-50' : 'bg-violet-300/20 text-violet-50'}`}>
-            <TriangleAlert className="h-5 w-5" />
-          </div>
-          <div className="space-y-2">
-            <p className={`text-sm font-bold tracking-wide ${quotaStatus.statusType === 'ok' ? 'text-cyan-100' : 'text-violet-100'}`}>สถานะโควต้า</p>
-            <p className="text-2xl font-bold text-white">{quotaStatus.title}</p>
-            <p className={`text-base leading-7 ${quotaStatus.statusType === 'ok' ? 'text-cyan-50' : 'text-violet-50'}`}>{quotaStatus.remainingText}</p>
+      <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-cyan-300/35 bg-[#2a2d40] text-white shadow-lg shadow-slate-950/30' : 'border border-violet-300/35 bg-slate-900/85 text-white shadow-lg shadow-violet-950/30'}`}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`rounded-2xl p-2 ${quotaStatus.statusType === 'ok' ? 'bg-[#8d65e7]/18 text-[#efe7ff]' : 'bg-violet-300/20 text-violet-50'}`}>
+              <TriangleAlert className="h-5 w-5" />
+            </div>
+            <div className="space-y-2">
+              <p className={`text-sm font-bold tracking-wide ${quotaStatus.statusType === 'ok' ? 'text-[#e7dcff]' : 'text-violet-100'}`}>สถานะโควต้า</p>
+              <p className="text-2xl font-bold text-white">{quotaStatus.title}</p>
+              <p className={`text-base leading-7 ${quotaStatus.statusType === 'ok' ? 'text-[#efe7ff]' : 'text-violet-50'}`}>{quotaStatus.remainingText}</p>
               {quotaStatus.resetText ? (
-                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${quotaStatus.statusType === 'ok' ? 'bg-cyan-400/15 text-cyan-50' : 'bg-violet-400/15 text-violet-50'}`}>
+                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${quotaStatus.statusType === 'ok' ? 'bg-cyan-400/15 text-[#efe7ff]' : 'bg-violet-400/15 text-violet-50'}`}>
                   <TimerReset className="h-4 w-4" />
                   {quotaStatus.resetText}
                 </div>
               ) : null}
+            </div>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setPageView('library')}
+            className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+          >
+            <Library className="mr-2 h-4 w-4" />
+            ไปดูในคลัง
+          </Button>
         </div>
       </div>
-      {/* Container: ในคอมใช้ sm:items-end เพื่อให้ฐานปุ่มกดลงมาชิดขอบล่างพอดี */}
-      <div className={`
-        flex flex-col gap-2 rounded-[2.5rem] bg-[#2d324a]/50 p-2 
-        sm:flex-row sm:flex-nowrap sm:items-end sm:justify-center sm:gap-0 sm:bg-transparent sm:p-0 sm:-mb-[4px] sm:w-full
-      `}>
-        
-        {/* ปุ่มที่ 1 */}
+
+      <div className="flex flex-col gap-2 rounded-[2.5rem] bg-[#41455f]/45 p-2 sm:mx-auto sm:w-[92%] sm:flex-row sm:flex-nowrap sm:items-end sm:justify-center sm:gap-0 sm:bg-transparent sm:p-0 sm:-mb-[4px]">
         <button
           type="button"
           onClick={() => setMode('brief')}
-          className={`
-            relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:px-8
-            /* Shape: ตัดฐานตรงในคอม */
-            rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem]
-            /* ⚡️ เทคนิคแก้รอยต่อ: ขยับฐานปุ่มลงมาทับขอบล่าง 1px */
-            sm:-mb-[1px] 
-            ${mode === 'brief'
-              ? 'z-20 h-20 bg-[#62677f] text-white shadow-lg sm:h-25 sm:w-[49%] sm:shadow-none sm:border-none' 
-              : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[45%] sm:bg-[#3a4059] sm:border sm:border-white/8 sm:border-b-transparent'} 
-            sm:min-w-0 sm:flex-none ${mode === 'brief' ? 'sm:-mr-4' : ''}
-          `}
+          className={`relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:min-w-0 sm:flex-none sm:px-8 rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem] sm:-mb-[1px] ${mode === 'brief'
+            ? 'z-20 h-20 bg-[#6d7189] text-white shadow-lg sm:h-25 sm:w-[49%] sm:shadow-none sm:border-none'
+            : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[45%] sm:bg-[#454963] sm:border sm:border-white/8 sm:border-b-transparent'} ${mode === 'brief' ? 'sm:-mr-4' : ''}`}
         >
           <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'brief' ? 'bg-black/20' : 'bg-white/5 sm:bg-white/8'}`}>
             <WandSparkles className="h-5 w-5 sm:h-6 sm:w-6" />
           </span>
-          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">ให้ระบบช่วยคิดสคริปต์</span>
+          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">วางแผนทั้งหมด</span>
         </button>
 
-        {/* ปุ่มที่ 2 */}
         <button
           type="button"
           onClick={() => setMode('script')}
-          className={`
-            relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:px-8
-            rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem]
-            sm:-mb-[1px]
-            ${mode === 'script'
-              ? 'z-20 h-20 bg-[#62677f] text-white shadow-lg sm:h-25 sm:w-[55%] sm:-ml-4 sm:shadow-none sm:border-none'
-              : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[51%] sm:bg-[#3a4059] sm:border sm:border-white/8 sm:border-b-transparent'} 
-            sm:min-w-0 sm:flex-none
-          `}
+          className={`relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:min-w-0 sm:flex-none sm:px-8 rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem] sm:-mb-[1px] ${mode === 'script'
+            ? 'z-20 h-20 bg-[#6d7189] text-white shadow-lg sm:h-25 sm:w-[55%] sm:-ml-4 sm:shadow-none sm:border-none'
+            : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[51%] sm:bg-[#454963] sm:border sm:border-white/8 sm:border-b-transparent'}`}
         >
           <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'script' ? 'bg-black/10' : 'bg-white/5 sm:bg-white/8'}`}>
             <Scissors className="h-5 w-5 sm:h-6 sm:w-6" />
           </span>
-          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">มีสคริปต์อยู่แล้ว ให้แตกช็อต</span>
+          <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">สร้างช็อตลิสต์จากสคริปต์</span>
         </button>
       </div>
-      <Card className="overflow-hidden border-white/12 bg-[#62677f] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
-        <CardContent className="space-y-6 p-4 sm:p-5">
-          <div className="rounded-[1.5rem] border border-white/12 bg-[#4F536B] shadow-lg p-5">
+
+      <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+        <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
+          <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">
+            {mode === 'brief' ? 'กรอกข้อมูลเพื่อสร้างสคริปต์' : 'วางสคริปต์เพื่อสร้างเป็นช็อตลิสต์'}
+          </CardTitle>
+          <p className="max-w-2xl text-base leading-7 text-slate-300">
+            {mode === 'brief'
+              ? 'เลือกประเภทคลิป แล้วเติมเรื่องที่อยากพูดให้ชัด ระบบจะช่วยคิดทั้งสคริปต์และสิ่งที่ต้องถ่าย'
+              : 'วางสคริปต์ที่มีอยู่แล้ว แล้วให้ระบบช่วยตัดเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น'}
+          </p>
+        </CardHeader>
+        <CardContent className="-mt-3 -mb-3 space-y-6 p-4 sm:p-5">
+          <div className="rounded-[1.5rem] border border-white/12 bg-[#5c6078] p-5 shadow-lg">
             {mode === 'brief' ? (
               <div className="space-y-6">
                 {renderOptionRow({ label: 'ประเภทวิดีโอ', options: topicOptions, value: topic, customValue: customTopic, onSelect: setTopic, onCustomChange: setCustomTopic, customPlaceholder: 'เช่น พาชมห้อง, แต่งหน้าไปเรียน, สรุปข่าวสั้น' })}
@@ -404,7 +696,7 @@ export default function PreProduction() {
                     value={topicDetail}
                     onChange={(e) => setTopicDetail(e.target.value)}
                     placeholder={topicDetailConfig.placeholder}
-                    className="h-12 rounded-2xl border-white/12 bg-slate-900/55 px-4 text-white placeholder:text-slate-500"
+                    className="h-12 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white placeholder:text-slate-500"
                   />
                   <p className="text-sm leading-6 text-slate-400">{topicDetailConfig.helper}</p>
                 </div>
@@ -418,7 +710,7 @@ export default function PreProduction() {
                   value={existingScript}
                   onChange={(e) => setExistingScript(e.target.value)}
                   placeholder="วางสคริปต์ตรงนี้ ระบบจะช่วยตัดช็อตใหม่ให้ดูทันสมัยขึ้น พร้อมบอกว่าแต่ละช็อตควรถ่ายอะไร"
-                  className="min-h-56 rounded-[1.5rem] border-white/12 bg-slate-900/65 px-4 py-4 text-white placeholder:text-slate-500"
+                  className="min-h-56 rounded-[1.5rem] border-white/12 bg-[#2f334b] px-4 py-4 text-white placeholder:text-slate-500"
                 />
               </div>
             )}
@@ -431,7 +723,7 @@ export default function PreProduction() {
                     key={seconds}
                     type="button"
                     variant={durationSeconds === seconds ? 'default' : 'outline'}
-                    className={durationSeconds === seconds ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20' : 'h-11 rounded-full border-white/12 bg-slate-700/45 px-4 text-slate-100 hover:bg-slate-600/55'}
+                    className={durationSeconds === seconds ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20' : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'}
                     onClick={() => setDurationSeconds(seconds)}
                   >
                     <Clock3 className="mr-2 h-4 w-4" />
@@ -444,81 +736,31 @@ export default function PreProduction() {
             <Button
               onClick={handleGenerate}
               disabled={loading || (mode === 'script' && !existingScript.trim())}
-              className="mt-6 h-13 w-full rounded-2xl bg-gradient-to-r from-[#D271E6] to-amber-600 px-6 text-base font-bold text-white shadow-lg shadow-violet-950/20 hover:bg-[#7a68dc]"
+              className="mt-6 h-13 w-full rounded-2xl bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] px-6 text-base font-bold text-white shadow-lg shadow-[#7b57cf]/20 hover:opacity-95"
             >
               {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}
-              {mode === 'brief' ? 'สร้างสคริปต์และ shot list' : 'แตกเป็น shot list'}
+              {mode === 'brief' ? 'สร้างสคริปต์และช็อตลิสต์' : 'สร้างช็อตลิสต์'}
             </Button>
           </div>
 
-          <div className="rounded-[1.5rem] bg-[#4F536B] shadow-lg p-5">
+          <div className="rounded-[1.5rem] bg-[#5c6078] p-5 shadow-lg">
             <p className="mb-3 text-xl font-bold tracking-wide text-white">สรุป :</p>
-            <div className="flex text-base items-start gap-3 text-white"><Star className="mt-1 h-4 w-4 text-cyan-200" />{prompt}</div>
-           
+            <div className="flex items-start gap-3 text-base text-white"><Star className="mt-1 h-4 w-4 text-[#dcc8ff]" />{prompt}</div>
             <div className="mt-4 text-sm leading-7 text-slate-300">
               {mode === 'brief' ? (
                 effectiveDetail ? (
-                  <div className="flex items-start gap-3 text-white"><Package2 className="mt-1 h-4 w-4 text-amber-200" /> ประเด็นหลักของคลิปนี้: {effectiveDetail}</div>
+                  <div className="flex items-start gap-3 text-white"><Package2 className="mt-1 h-4 w-4 text-[#f2c7ff]" /> ประเด็นหลักของคลิปนี้: {effectiveDetail}</div>
                 ) : (
                   <div>ยังไม่ได้ใส่รายละเอียดเพิ่ม ระบบจะคิดจากประเภทคลิปและกลุ่มคนดูเป็นหลัก</div>
                 )
               ) : (
-                <div className="flex items-start gap-3 text-white"><FileText className="mt-1 h-4 w-4 text-amber-200" /> ระบบจะอ่านสคริปต์เดิม แล้วแตกเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น</div>
+                <div className="flex items-start gap-3 text-white"><FileText className="mt-1 h-4 w-4 text-[#f2c7ff]" /> ระบบจะอ่านสคริปต์เดิม แล้วแตกเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น</div>
               )}
-              <div className="mt-2 flex items-start gap-3 text-slate-200"><Camera className="mt-1 h-4 w-4 text-cyan-200" /> แต่ละช็อตจะมีทั้งสิ่งที่ต้องพูด และสิ่งที่ต้องถ่ายแยกกันชัดเจน</div>
+              <div className="mt-2 flex items-start gap-3 text-slate-200"><Camera className="mt-1 h-4 w-4 text-[#dcc8ff]" /> แต่ละช็อตจะมีทั้งสิ่งที่ต้องพูด และสิ่งที่ต้องถ่ายแยกกันชัดเจน</div>
             </div>
           </div>
         </CardContent>
       </Card>
-
-      {script && (
-        <Card className="border-white/12 bg-slate-950/75 shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
-          <CardHeader className="flex flex-col gap-4 border-b border-white/8 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="ml-2 mb-2 text-sm font-bold tracking-wide text-white">ผลลัพธ์</p>
-              <CardTitle className="ml-2 text-2xl font-black tracking-tight text-white">{script.title}</CardTitle>
-              <p className="ml-2 mt-2 text-sm leading-6 text-slate-300">ความยาวรวม {durationSeconds} วินาที พร้อมแผนการพูดและภาพที่ควรถ่ายในแต่ละช็อต</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={handleDownloadTxt} className="rounded-2xl border-white/12 bg-white/6 px-5 text-slate-100 hover:bg-white/12">
-                <Download className="mr-2 h-4 w-4" />
-                ดาวน์โหลด TXT
-              </Button>
-              <Button variant="outline" onClick={handleDownloadSrt} className="rounded-2xl border-cyan-300/25 bg-cyan-400/10 px-5 text-cyan-50 hover:bg-cyan-400/16">
-                <Captions className="mr-2 h-4 w-4" />
-                ดาวน์โหลด SRT
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <ScrollArea className="h-[760px] px-4 py-4 sm:px-6">
-              <div className="space-y-4 pb-4">
-                {script.shots.sort((a, b) => a.order_index - b.order_index).map((shot, i) => (
-                  <div key={i} className="rounded-[1.75rem] border border-white/12 bg-white/6 p-5 shadow-lg shadow-black/10">
-                    <div className="mb-4 flex flex-wrap items-center gap-2">
-                      <Badge variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'} className={shot.shot_type === 'A-Roll' ? 'bg-[#6d5bd0] text-white' : 'bg-[#A448BF] text-white'}>
-                        {getShotTypeLabel(shot.shot_type)}
-                      </Badge>
-                      <span className="rounded-full border border-white/12 bg-white/6 px-3 py-1 text-xs font-semibold text-slate-200">ช็อต #{shot.order_index}</span>
-                      <span className="rounded-full border border-violet-300/20 bg-violet-400/12 px-3 py-1 text-xs font-semibold text-violet-100">ประมาณ {shot.duration_seconds} วินาที</span>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="rounded-2xl border border-white/8 bg-slate-950/50 p-4">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">พูด / ใจความ</p>
-                        <p className="text-base leading-7 text-white">{shot.script_text}</p>
-                      </div>
-                      <div className="rounded-2xl border border-cyan-300/20 bg-sky-300/8 p-4">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">ต้องถ่ายอะไร</p>
-                        <p className="text-base leading-7 text-slate-100">{shot.visual_description}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

@@ -49,7 +49,7 @@
 }
 
 :root {
-    --background: oklch(0.985 0.01 265);
+    --background: oklch(0.978 0.01 265);
     --foreground: oklch(0.23 0.03 265);
     --card: oklch(0.99 0.01 265);
     --card-foreground: oklch(0.23 0.03 265);
@@ -127,10 +127,10 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(circle at top left, rgba(96, 165, 250, 0.22), transparent 28%),
-      radial-gradient(circle at top right, rgba(167, 139, 250, 0.18), transparent 24%),
-      radial-gradient(circle at bottom left, rgba(148, 163, 184, 0.16), transparent 28%),
-      linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.02));
+      radial-gradient(circle at top left, rgba(186, 151, 255, 0.14), transparent 30%),
+      radial-gradient(circle at top right, rgba(92, 105, 180, 0.1), transparent 24%),
+      radial-gradient(circle at bottom left, rgba(129, 135, 170, 0.08), transparent 28%),
+      linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.04));
     min-height: 100vh;
   }
 }

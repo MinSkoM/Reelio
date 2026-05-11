@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 
-const DAILY_REQUEST_LIMIT = Number(process.env.DAILY_REQUEST_LIMIT_PER_USER || 20);
+const DAILY_REQUEST_LIMIT = Number(process.env.DAILY_REQUEST_LIMIT_PER_USER || 5);
 const TIME_ZONE = 'Asia/Bangkok';
 
 const scriptSchema = {
