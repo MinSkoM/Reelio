@@ -1,12 +1,9 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-
 export interface GeneratedScript {
   title: string;
   shots: {
     shot_type: 'A-Roll' | 'B-Roll';
     script_text: string;
+    visual_description: string;
     order_index: number;
     duration_seconds: number;
   }[];
@@ -20,46 +17,76 @@ export interface ScriptRequest {
   durationSeconds: number;
 }
 
-export async function generateScript(request: ScriptRequest): Promise<GeneratedScript> {
-  const { topic, product, audience, tone, durationSeconds } = request;
-  const productContext = product?.trim()
-    ? `The main product or thing to focus on is ${product}. `
-    : '';
+export interface QuotaSnapshot {
+  statusType: 'ok' | 'temporary' | 'daily';
+  used: number;
+  remaining: number;
+  limit: number;
+  resetHours: number | null;
+  retryMinutes: number | null;
+  note: string | null;
+}
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Create a short-form video script about ${topic}. ${productContext}The audience is ${audience}. Use a ${tone.toLowerCase()} tone. Keep the full video around ${durationSeconds} seconds. Split every beat into either A-Roll (person speaking directly to camera) or B-Roll (insert shots or visuals with voiceover). Return only A-Roll or B-Roll for shot_type. Include duration_seconds for each shot, and make the total duration feel close to ${durationSeconds} seconds overall. Keep the wording simple and practical for filming.`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          shots: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                shot_type: {
-                  type: Type.STRING,
-                  enum: ['A-Roll', 'B-Roll']
-                },
-                script_text: { type: Type.STRING },
-                order_index: { type: Type.INTEGER },
-                duration_seconds: { type: Type.INTEGER }
-              },
-              required: ['shot_type', 'script_text', 'order_index', 'duration_seconds']
-            }
-          }
-        },
-        required: ['title', 'shots']
-      }
-    }
-  });
+export interface GeneratedScriptResponse {
+  result: GeneratedScript;
+  quota: QuotaSnapshot;
+}
 
-  if (!response.text) {
-    throw new Error("No script generated from AI.");
+const ANONYMOUS_USER_STORAGE_KEY = 'tudtor-anonymous-user-id';
+
+function getAnonymousUserId() {
+  if (typeof window === 'undefined') {
+    return 'server-render';
   }
 
-  return JSON.parse(response.text) as GeneratedScript;
+  const existing = window.localStorage.getItem(ANONYMOUS_USER_STORAGE_KEY);
+  if (existing) return existing;
+
+  const next = window.crypto?.randomUUID?.().replace(/-/g, '') || `user_${Math.random().toString(36).slice(2, 18)}`;
+  window.localStorage.setItem(ANONYMOUS_USER_STORAGE_KEY, next);
+  return next;
+}
+
+async function parseResponse(response: Response) {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.error || 'Request failed.');
+    (error as any).quota = data?.quota || null;
+    throw error;
+  }
+  return data;
+}
+
+export async function fetchQuotaStatus(): Promise<QuotaSnapshot> {
+  const userId = getAnonymousUserId();
+  const response = await fetch(`/api/preproduction?anonymousUserId=${encodeURIComponent(userId)}`);
+  const data = await parseResponse(response);
+  return data.quota;
+}
+
+export async function generateScript(request: ScriptRequest): Promise<GeneratedScriptResponse> {
+  const response = await fetch('/api/preproduction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'brief',
+      anonymousUserId: getAnonymousUserId(),
+      request,
+    }),
+  });
+  return parseResponse(response);
+}
+
+export async function breakScriptIntoShots(scriptText: string, durationSeconds: number): Promise<GeneratedScriptResponse> {
+  const response = await fetch('/api/preproduction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'script',
+      anonymousUserId: getAnonymousUserId(),
+      scriptText,
+      durationSeconds,
+    }),
+  });
+  return parseResponse(response);
 }
