@@ -52,6 +52,7 @@ const MOCK_SESSION_PAYLOAD: SessionPayload = {
   selectedShotOrder: 1,
   script: {
     title: 'Mock Mobile Preview',
+    caption: 'Mock caption สำหรับดูตำแหน่งปุ่มและ teleprompter บนหน้ามือถือ',
     shots: [
       {
         order_index: 1,
@@ -128,6 +129,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   const [autoScroll, setAutoScroll] = useState(false);
   const [scrollSpeed, setScrollSpeed] = useState(20);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [countdownEnabled, setCountdownEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -407,8 +409,13 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
   const handleStartRecording = () => {
     if ((!streamRef.current && !mock) || !selectedShot || !sessionPayload || isSending || isRecording) return;
-    setLastUploadMessage('เตรียมเริ่มอัดใน 3 วินาที');
-    setCountdown(3);
+    if (countdownEnabled) {
+      setLastUploadMessage('เตรียมเริ่มอัดใน 3 วินาที');
+      setCountdown(3);
+      return;
+    }
+
+    void startActualRecording();
   };
 
   const handleStopRecording = () => {
@@ -471,10 +478,11 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
               autoPlay
               playsInline
               muted
+              pointer-events-none
               className={`absolute inset-0 h-full w-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
             />
           ) : (
-            <div className="absolute inset-0 bg-white" />
+            <div className="absolute inset-0 bg-black" />
           )}
 
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/70" />
@@ -499,7 +507,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
             </div>
 
             {showShotPicker && sessionPayload ? (
-              <div className="absolute left-4 right-4 top-16 z-30 max-h-[40vh] overflow-auto rounded-3xl border border-white/10 bg-black/50 p-2 backdrop-blur-xl shadow-2xl">
+              <div className="absolute left-4 right-4 top-16 z-30 max-h-[40vh] overflow-auto rounded-2xl border border-white/10 bg-black/50 p-2 backdrop-blur-xl shadow-2xl">
                 <div className="space-y-1">
                   {sessionPayload.script.shots
                     .slice()
@@ -538,9 +546,18 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
             
 
             <div className="space-y-4">
+              <div className="px-4 flex items-center justify-center gap-4">
+                <button
+                    type="button"
+                    onClick={() => setCountdownEnabled((current) => !current)}
+                    className={`rounded-full px-4 py-2 text-xs font-bold transition ${countdownEnabled ? 'bg-[#8d65e7] text-white' : 'bg-white/10 text-white/70'}`}
+                  >
+                    {countdownEnabled ? 'เปิด countdown 3 วิ' : 'ปิด countdown 3 วิ'}
+                  </button>
+              </div>
               {zoomCapability ? (
                 <div className="px-4">
-                  <div className="pointer-events-auto rounded-full border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-md">
+                  <div className="pointer-events-auto rounded-half border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-md">
                     <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/50">
                       <span>Zoom</span>
                       <span>{zoomLevel.toFixed(1)}x</span>
@@ -603,7 +620,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
               </div>
 
               <div className="space-y-1 text-center">
-                <p className="text-xs text-white/75">{countdown != null ? `เริ่มอัดใน ${countdown}...` : lastUploadMessage || 'พร้อมถ่ายช็อตนี้แล้ว'}</p>
+                <p className="text-xs text-white/75">{countdown != null ? `เริ่มอัดใน ${countdown}...` : lastUploadMessage || (countdownEnabled ? 'พร้อมถ่ายช็อตนี้แล้ว' : 'พร้อมอัดทันทีโดยไม่ต้องนับถอยหลัง')}</p>
                 {sessionPayload ? <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">Project: {sessionPayload.title}</p> : null}
               </div>
             </div>

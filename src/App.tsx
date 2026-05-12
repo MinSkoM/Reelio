@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Clapperboard, MonitorSmartphone, Sparkles } from 'lucide-react';
+import { Clapperboard, Library, MonitorSmartphone, Sparkles } from 'lucide-react';
 import PreProduction from './components/PreProduction';
 import ProductionStudio from './components/ProductionStudio';
 import MobileProduction from './components/MobileProduction';
@@ -9,6 +9,7 @@ type DesktopPage = 'prepro' | 'production';
 
 export default function App() {
   const [desktopPage, setDesktopPage] = useState<DesktopPage>('prepro');
+  const [openLibraryTick, setOpenLibraryTick] = useState(0);
 
   const mobileRoute = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -60,6 +61,18 @@ export default function App() {
               <MonitorSmartphone className="mr-2 h-4 w-4" />
               PC Control Center
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDesktopPage('prepro');
+                setOpenLibraryTick((current) => current + 1);
+              }}
+              className="min-h-11 flex-1 rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-slate-300 hover:bg-white/10 sm:flex-none"
+            >
+              <Library className="mr-2 h-4 w-4" />
+              คลังงาน
+            </Button>
           </div>
         </div>
       </nav>
@@ -81,7 +94,7 @@ export default function App() {
           </div>
         </section>
 
-        {desktopPage === 'prepro' ? <PreProduction /> : <ProductionStudio />}
+        {desktopPage === 'prepro' ? <PreProduction forceLibraryViewTick={openLibraryTick} /> : <ProductionStudio />}
       </main>
     </div>
   );

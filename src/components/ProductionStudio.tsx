@@ -446,15 +446,6 @@ export default function ProductionStudio() {
                 </div>
                 <div className="space-y-2">
                   <p className="text-sm font-semibold text-white">ลิงก์สำหรับมือถือ</p>
-                  <Input
-                    value={mobileOrigin}
-                    onChange={(event) => setMobileOrigin(event.target.value)}
-                    placeholder="เช่น https://your-app.vercel.app หรือ http://192.168.x.x:3000"
-                    className="h-12 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white placeholder:text-slate-500"
-                  />
-                  <p className="text-xs leading-6 text-slate-300">
-                    ถ้าเปิดจาก <code>localhost</code> บนคอม มือถือจะสแกนแล้วเข้าไม่ได้ ให้ใส่ URL ที่มือถือเปิดถึงจริง เช่นโดเมนบน Vercel หรือ IP ในวง LAN
-                  </p>
                   <p className="break-all rounded-2xl bg-[#2f334b] px-4 py-3 text-xs leading-6 text-slate-300">{sessionUrl || 'ยังไม่มีลิงก์ session'}</p>
                 </div>
                 {lastMessage ? <p className="text-sm text-[#efe7ff]">สถานะล่าสุด: {lastMessage}</p> : null}

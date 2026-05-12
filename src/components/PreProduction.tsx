@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen } from 'lucide-react';
+import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy } from 'lucide-react';
 import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
@@ -146,7 +146,7 @@ function saveLibrary(items: LibraryItem[]) {
   window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(items));
 }
 
-export default function PreProduction() {
+export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibraryViewTick?: number }) {
   const [pageView, setPageView] = useState<PageView>('editor');
   const [mode, setMode] = useState<Mode>('brief');
   const [topic, setTopic] = useState(topicOptions[0]);
@@ -159,6 +159,7 @@ export default function PreProduction() {
   const [durationSeconds, setDurationSeconds] = useState(durationOptions[1]);
   const [existingScript, setExistingScript] = useState('');
   const [loading, setLoading] = useState(false);
+  const [captionCopied, setCaptionCopied] = useState(false);
   const [script, setScript] = useState<GeneratedScript | null>(null);
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [activeLibraryItemId, setActiveLibraryItemId] = useState<string | null>(null);
@@ -173,6 +174,12 @@ export default function PreProduction() {
   useEffect(() => {
     setLibraryItems(loadLibrary());
   }, []);
+
+  useEffect(() => {
+    if (forceLibraryViewTick > 0) {
+      setPageView('library');
+    }
+  }, [forceLibraryViewTick]);
 
   useEffect(() => {
     let active = true;
@@ -313,6 +320,20 @@ export default function PreProduction() {
     setPageView('shot-list');
   };
 
+  const deleteLibraryItem = (item: LibraryItem) => {
+    if (!confirm(`คุณแน่ใจไหมว่าต้องการลบงาน "${item.title}"? การกระทำนี้ไม่สามารถย้อนกลับได้`)) {
+      return;
+    }
+    const nextItems = libraryItems.filter((entry) => entry.id !== item.id);
+    setLibraryItems(nextItems);
+    saveLibrary(nextItems);
+    if (activeLibraryItemId === item.id) {
+      setActiveLibraryItemId(null);
+      setScript(null);
+      setPageView('editor');
+    }
+  };
+
   const toggleShotCompleted = (orderIndex: number) => {
     setCompletedShots((current) => ({
       ...current,
@@ -330,21 +351,37 @@ export default function PreProduction() {
     URL.revokeObjectURL(url);
   };
 
+  const buildCaptionText = () => {
+    if (!script) return '';
+
+    if (script.caption?.trim()) return script.caption.trim();
+
+    const highlight = script.shots
+      .slice()
+      .sort((a, b) => a.order_index - b.order_index)
+      .slice(0, 2)
+      .map((shot) => shot.script_text.trim())
+      .filter(Boolean)
+      .join(' ');
+
+    return [script.title, prompt, highlight].filter(Boolean).join('\n\n');
+  };
+
+  const escapeCsvValue = (value: string) => `"${value.replace(/"/g, '""')}"`;
+
   const handleDownloadTxt = () => {
     if (!script) return;
 
     const lines = [
-      `ชื่อคลิป: ${script.title}`,
-      `สรุป: ${currentLibraryItem?.prompt || prompt}`,
+      `${script.title}`,
+      `${prompt}`,
       '',
       ...script.shots
         .sort((a, b) => a.order_index - b.order_index)
         .flatMap((shot) => [
-          `ช็อต ${shot.order_index}`,
-          `ประเภท: ${getShotTypeLabel(shot.shot_type)}`,
-          `ระยะเวลา: ${shot.duration_seconds} วินาที`,
-          `พูด / ใจความ: ${shot.script_text}`,
-          `ต้องถ่ายอะไร: ${shot.visual_description}`,
+          `Shot ${shot.order_index}`,
+          `Voice: ${shot.script_text}`,
+          `Description: ${shot.visual_description}`,
           '',
         ]),
     ];
@@ -352,34 +389,46 @@ export default function PreProduction() {
     downloadFile(lines.join('\n'), `${buildExportFileBase()}.txt`, 'text/plain;charset=utf-8');
   };  
 
-  const formatSrtTimestamp = (totalSeconds: number) => {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = Math.floor(totalSeconds % 60);
-    const milliseconds = Math.round((totalSeconds - Math.floor(totalSeconds)) * 1000);
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
-  };
-
-  const handleDownloadSrt = () => {
+  const handleDownloadCsv = () => {
     if (!script) return;
 
-    let currentTime = 0;
-    const srt = script.shots
-      .sort((a, b) => a.order_index - b.order_index)
-      .map((shot, index) => {
-        const start = currentTime;
-        const end = currentTime + shot.duration_seconds;
-        currentTime = end;
-        return [
-          String(index + 1),
-          `${formatSrtTimestamp(start)} --> ${formatSrtTimestamp(end)}`,
-          shot.script_text,
-          '',
-        ].join('\n');
-      })
-      .join('\n');
+    const rows = [
+      ['Shot', 'Description', 'Voice'],
+      ...script.shots
+        .slice()
+        .sort((a, b) => a.order_index - b.order_index)
+        .map((shot) => [String(shot.order_index), shot.visual_description, shot.script_text]),
+    ];
 
-    downloadFile(srt, `${buildExportFileBase()}.srt`, 'application/x-subrip;charset=utf-8');
+    const csv = rows.map((row) => row.map((cell) => escapeCsvValue(cell)).join(',')).join('\n');
+    downloadFile(csv, `${buildExportFileBase()}.csv`, 'text/csv;charset=utf-8');
+  };
+
+  const handleCopyCaption = async () => {
+    const captionText = buildCaptionText();
+    if (!captionText.trim()) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(captionText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = captionText;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+
+      setCaptionCopied(true);
+      window.setTimeout(() => setCaptionCopied(false), 2000);
+    } catch (error) {
+      console.error('Copy failed:', error);
+      alert('คัดลอกข้อความไม่สำเร็จ');
+    }
   };
 
   const renderOptionRow = ({ label, options, value, customValue, onSelect, onCustomChange, customPlaceholder }: OptionFieldProps) => {
@@ -479,7 +528,7 @@ export default function PreProduction() {
                         </span>
                       </div>
                       <p className="text-2xl font-bold text-white">{item.title}</p>
-                      <p className="text-sm leading-6 text-slate-200">{item.prompt}</p>
+                      <p className="text-sm leading-6 text-slate-200">{item.script.caption?.trim() || 'งานนี้ยังไม่มี AI caption เพราะสร้างไว้ก่อนระบบ caption รุ่นใหม่'}</p>
                       <div className="space-y-2 pt-2">
                         <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-200">
                           <span>ถ่ายแล้ว {libraryProgress[item.id]?.completed || 0}/{item.script.shots.length} ช็อต</span>
@@ -493,10 +542,18 @@ export default function PreProduction() {
                         </div>
                       </div>
                     </div>
-                    <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
+                    <div className="inline-flex items-center gap-2 border border-white/10 rounded-full bg-[#8d65e7]/30 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
                       <FolderOpen className="h-4 w-4" />
                       เปิดดู {item.script.shots.length} ช็อต
                     </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => deleteLibraryItem(item)}
+                      className="bg-red-500/40 text-red-400 hover:bg-red-500/30 border-white/10 px-4 text-slate-100"
+                    >
+                      ลบ
+                    </Button>
                   </div>
                 </button>
               ))
@@ -524,7 +581,7 @@ export default function PreProduction() {
                   className="rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
                 >
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  กลับไปแก้ข้อมูล
+                  กลับไปหน้าหลัก
                 </Button>
                 <Button
                   type="button"
@@ -544,16 +601,38 @@ export default function PreProduction() {
                   <Download className="mr-2 h-4 w-4" />
                   ดาวน์โหลด TXT
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDownloadCsv}
+                  className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  ดาวน์โหลด CSV
+                </Button>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
                 <CheckCircle2 className="h-4 w-4" />
                 ถ่ายเสร็จแล้ว {completedCount}/{sortedShots.length} ช็อต
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-sm font-bold tracking-wide text-[#e7dcff]">หน้าช็อตลิสต์</p>
               <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">{script.title}</CardTitle>
-              <p className="max-w-3xl text-base leading-7 text-slate-200">{currentLibraryItem?.prompt || prompt}</p>
+              <div className="rounded-2xl border border-white/10 bg-[#2f334b]/65 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <p className="max-w-3xl whitespace-pre-line text-sm leading-7 text-slate-100">{buildCaptionText() || 'งานนี้ยังไม่มี AI caption เพราะสร้างไว้ก่อนระบบ caption รุ่นใหม่'}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleCopyCaption}
+                    className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    {captionCopied ? 'คัดลอกแล้ว' : 'คัดลอก caption'}
+                  </Button>
+                </div>
+              </div>
             </div>
           </CardHeader>
 
@@ -598,7 +677,7 @@ export default function PreProduction() {
                       </div>
                     </div>
 
-                    <label className={`inline-flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-300 ${
+                    <label className={`inline-flex w-full cursor-pointer items-center justify-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-300 sm:w-auto ${
                       isCompleted
                         ? 'border-white/10 bg-[#474c63] text-white'
                         : 'border-[#a98eff]/20 bg-[#8d65e7]/14 text-[#efe7ff]'

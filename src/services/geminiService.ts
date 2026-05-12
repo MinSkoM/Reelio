@@ -1,5 +1,6 @@
 export interface GeneratedScript {
   title: string;
+  caption: string;
   shots: {
     shot_type: 'A-Roll' | 'B-Roll';
     script_text: string;
