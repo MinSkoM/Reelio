@@ -4,7 +4,15 @@ import { GeneratedScript } from '../services/geminiService';
 import { getShotTypeLabel } from '../lib/shotLabels';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Camera, CameraOff, CheckCircle2, ChevronDown, CircleStop, Loader2, Mic, PlayCircle, RotateCcw, Smartphone, Wifi, WifiOff, Zap, ZapOff } from 'lucide-react';
+import { Camera, CameraOff, CheckCircle2, ChevronDown, CircleStop, Loader2, PlayCircle, RotateCcw, Smartphone, Wifi, WifiOff, Zap, ZapOff } from 'lucide-react';
+
+const RECORDER_MIME_TYPES = [
+  'video/mp4;codecs=h264,aac',
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+  'video/mp4',
+];
 
 type HostToMobileMessage =
   | { type: 'session-script'; itemId: string; title: string; prompt: string; script: GeneratedScript; selectedShotOrder: number | null }
@@ -40,7 +48,7 @@ type ZoomCapability = {
   step: number;
 };
 
-function buildClipFileName(orderIndex: number) {
+function buildClipFileName(orderIndex: number, mimeType: string) {
   const now = new Date();
   const stamp = [
     now.getFullYear(),
@@ -51,8 +59,8 @@ function buildClipFileName(orderIndex: number) {
     String(now.getMinutes()).padStart(2, '0'),
     String(now.getSeconds()).padStart(2, '0'),
   ].join('');
-
-  return `${stamp}-shot-${String(orderIndex).padStart(2, '0')}.webm`;
+  const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
+  return `${stamp}-shot-${String(orderIndex).padStart(2, '0')}.${extension}`;
 }
 
 function getCameraErrorMessage() {
@@ -71,12 +79,22 @@ function getTrackCapabilities(track: MediaStreamTrack) {
   return ((track as MediaStreamTrack & { getCapabilities?: () => Record<string, any> }).getCapabilities?.() || {}) as Record<string, any>;
 }
 
+function getSupportedRecorderMimeType() {
+  for (const mimeType of RECORDER_MIME_TYPES) {
+    if ((window as any).MediaRecorder?.isTypeSupported?.(mimeType)) {
+      return mimeType;
+    }
+  }
+  return '';
+}
+
 export default function MobileProduction({ sessionId }: { sessionId: string }) {
   const [connectionStatus, setConnectionStatus] = useState('กำลังเชื่อมกับคอม');
   const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(null);
   const [selectedShotOrder, setSelectedShotOrder] = useState<number | null>(null);
   const [cameraError, setCameraError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [lastUploadMessage, setLastUploadMessage] = useState('');
   const [showShotPicker, setShowShotPicker] = useState(false);
@@ -120,10 +138,17 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
 
     stopCurrentStream();
     setCameraError('');
+    setTorchOn(false);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: preferredFacingMode } },
+        video: {
+          facingMode: { ideal: preferredFacingMode },
+          width: { ideal: 1080 },
+          height: { ideal: 1920 },
+          aspectRatio: { ideal: 9 / 16 },
+          frameRate: { ideal: 25, max: 30 },
+        },
         audio: true,
       });
 
@@ -257,15 +282,16 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
     sendMessage({ type: 'active-shot', orderIndex });
   };
 
-  const handleStartRecording = () => {
+  const startActualRecording = () => {
     const stream = streamRef.current;
     if (!stream || !selectedShot || !sessionPayload) return;
 
     try {
       chunksRef.current = [];
-      const recorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm',
-      });
+      const supportedMimeType = getSupportedRecorderMimeType();
+      const recorder = supportedMimeType
+        ? new MediaRecorder(stream, { mimeType: supportedMimeType })
+        : new MediaRecorder(stream);
       recorderRef.current = recorder;
       const startedAt = Date.now();
 
@@ -278,7 +304,8 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
       recorder.onstop = async () => {
         if (!sessionPayload || !selectedShot) return;
         setIsSending(true);
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'video/webm' });
+        const mimeType = recorder.mimeType || supportedMimeType || 'video/webm';
+        const blob = new Blob(chunksRef.current, { type: mimeType });
         const buffer = await blob.arrayBuffer();
         const durationMs = Date.now() - startedAt;
         sendMessage({
@@ -287,8 +314,8 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
           shotOrder: selectedShot.order_index,
           shotType: selectedShot.shot_type,
           durationMs,
-          mimeType: recorder.mimeType || 'video/webm',
-          fileName: buildClipFileName(selectedShot.order_index),
+          mimeType,
+          fileName: buildClipFileName(selectedShot.order_index, mimeType),
           createdAt: Date.now(),
           buffer,
         });
@@ -306,11 +333,33 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
 
       recorder.start();
       setIsRecording(true);
+      setLastUploadMessage('กำลังอัดคลิปอยู่');
     } catch (error: any) {
       setCameraError(error?.message || 'เริ่มอัดคลิปไม่สำเร็จ');
       sendMessage({ type: 'mobile-error', message: error?.message || 'เริ่มอัดคลิปไม่สำเร็จ' });
     }
   };
+
+  const handleStartRecording = () => {
+    if (!streamRef.current || !selectedShot || !sessionPayload || isSending || isRecording) return;
+    setCountdown(3);
+  };
+
+  useEffect(() => {
+    if (countdown == null) return;
+
+    if (countdown <= 0) {
+      setCountdown(null);
+      startActualRecording();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCountdown((current) => (current == null ? null : current - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [countdown]);
 
   const handleStopRecording = () => {
     recorderRef.current?.stop();
@@ -329,26 +378,21 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const handleZoomChange = async (direction: 'in' | 'out') => {
+  const handleZoomRangeChange = async (value: number) => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track || !zoomCapability) return;
-    const delta = direction === 'in' ? zoomCapability.step : -zoomCapability.step;
-    const next = Number((zoomLevel + delta).toFixed(2));
-    const clamped = Math.min(zoomCapability.max, Math.max(zoomCapability.min, next));
     try {
-      await applyTrackState(track, clamped, torchOn);
-      setZoomLevel(clamped);
+      await applyTrackState(track, value, torchOn);
+      setZoomLevel(value);
     } catch (error: any) {
       setLastUploadMessage(error?.message || 'ปรับซูมไม่สำเร็จ');
     }
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-black text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(127,90,240,0.16),transparent_30%),linear-gradient(180deg,rgba(8,9,16,0.2),rgba(8,9,16,0.7))]" />
-
+    <div className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       {cameraError ? (
-        <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-8">
+        <div className="relative z-10 flex min-h-[100svh] items-center justify-center px-5 py-8">
           <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-[#16192a]/92 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl">
             <div className="flex items-center gap-3">
               <div className="rounded-2xl bg-[#bb95ff] p-2 text-[#2a2d40]">
@@ -374,15 +418,20 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
         </div>
       ) : (
         <>
-          <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 h-full w-full object-cover" />
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-44 bg-gradient-to-b from-black/72 via-black/36 to-transparent" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-80 bg-gradient-to-t from-black/88 via-black/54 to-transparent" />
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`absolute inset-0 h-full w-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,9,16,0.54),rgba(8,9,16,0.08)_22%,rgba(8,9,16,0.08)_58%,rgba(8,9,16,0.72))]" />
 
-          <div className="relative z-20 flex min-h-screen flex-col justify-between px-4 py-5">
+          <div className="relative z-20 flex min-h-[100svh] flex-col justify-between px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
             <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="rounded-[1.25rem] border border-white/10 bg-black/35 px-4 py-3 backdrop-blur-xl">
-                  <div className="flex items-center gap-2 text-sm text-slate-200">
+              <div className="flex items-start justify-between gap-2">
+                <div className="rounded-[1.1rem] border border-white/10 bg-black/30 px-3 py-2 backdrop-blur-xl">
+                  <div className="flex items-center gap-2 text-xs text-slate-200 sm:text-sm">
                     {connectionRef.current?.open ? <Wifi className="h-4 w-4 text-[#bb95ff]" /> : <WifiOff className="h-4 w-4 text-slate-300" />}
                     {connectionStatus}
                   </div>
@@ -391,7 +440,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
                   <button
                     type="button"
                     onClick={() => setShowShotPicker((current) => !current)}
-                    className="pointer-events-auto inline-flex items-center gap-2 rounded-[1.25rem] border border-white/10 bg-black/35 px-4 py-3 text-sm font-semibold text-white backdrop-blur-xl"
+                    className="pointer-events-auto inline-flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-black/30 px-3 py-2 text-xs font-semibold text-white backdrop-blur-xl sm:text-sm"
                   >
                     <Smartphone className="h-4 w-4 text-[#bb95ff]" />
                     ช็อต {selectedShotOrder ?? '-'}
@@ -400,26 +449,8 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
                 ) : null}
               </div>
 
-              <div className="pointer-events-auto flex flex-wrap items-center gap-2 rounded-[1.25rem] border border-white/10 bg-black/28 p-2 backdrop-blur-xl">
-                <Button type="button" onClick={() => setFacingMode((current) => (current === 'environment' ? 'user' : 'environment'))} className="rounded-full bg-white/10 px-4 text-white hover:bg-white/16">
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  สลับกล้อง
-                </Button>
-                <Button type="button" onClick={handleToggleTorch} disabled={!torchSupported} className="rounded-full bg-white/10 px-4 text-white hover:bg-white/16 disabled:opacity-40">
-                  {torchOn ? <ZapOff className="mr-2 h-4 w-4" /> : <Zap className="mr-2 h-4 w-4" />}
-                  {torchOn ? 'ปิดแฟลช' : 'เปิดแฟลช'}
-                </Button>
-                {zoomCapability ? (
-                  <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-sm font-semibold text-white">
-                    <button type="button" onClick={() => { void handleZoomChange('out'); }} className="rounded-full bg-white/10 px-2 py-1">-</button>
-                    {zoomLevel.toFixed(1)}x
-                    <button type="button" onClick={() => { void handleZoomChange('in'); }} className="rounded-full bg-white/10 px-2 py-1">+</button>
-                  </div>
-                ) : null}
-              </div>
-
               {showShotPicker && sessionPayload ? (
-                <div className="pointer-events-auto max-h-72 overflow-auto rounded-[1.5rem] border border-white/10 bg-[#16192a]/88 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
+                <div className="pointer-events-auto max-h-[42svh] overflow-auto rounded-[1.5rem] border border-white/10 bg-[#16192a]/88 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
                   <div className="mb-3 text-sm font-bold tracking-wide text-[#e7dcff]">เลือกช็อตที่จะถ่าย</div>
                   <div className="space-y-2">
                     {sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index).map((shot) => {
@@ -446,17 +477,17 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
               ) : null}
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               {selectedShot ? (
-                <div className="pointer-events-none rounded-[1.75rem] border border-white/10 bg-[#101322]/52 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+                <div className="pointer-events-none rounded-[1.75rem] border border-white/10 bg-[#0f1220]/34 px-4 py-5 shadow-2xl shadow-black/40 backdrop-blur-md sm:px-5">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className={selectedShot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}>
                       {getShotTypeLabel(selectedShot.shot_type)}
                     </Badge>
-                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-xs font-semibold text-white">
+                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-semibold text-white">
                       ช็อต {selectedShot.order_index}
                     </span>
-                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-xs font-semibold text-slate-200">
+                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-semibold text-slate-200">
                       {selectedShot.duration_seconds} วินาที
                     </span>
                   </div>
@@ -464,32 +495,36 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#d9c6ff]">Teleprompt</p>
                     <div className="pointer-events-auto flex items-center gap-2">
-                      <Button type="button" onClick={() => setAutoScroll((current) => !current)} className="h-9 rounded-full bg-white/10 px-3 text-white hover:bg-white/16">
+                      <Button type="button" onClick={() => setAutoScroll((current) => !current)} className="h-8 rounded-full bg-white/10 px-3 text-xs text-white hover:bg-white/16 sm:h-9 sm:text-sm">
                         {autoScroll ? 'หยุดเลื่อน' : 'เลื่อนอัตโนมัติ'}
                       </Button>
-                      <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white">
-                        ช้า
-                        <input
-                          type="range"
-                          min={8}
-                          max={40}
-                          step={2}
-                          value={scrollSpeed}
-                          onChange={(event) => setScrollSpeed(Number(event.target.value))}
-                          className="pointer-events-auto w-20 accent-[#bb95ff]"
-                        />
-                        เร็ว
-                      </div>
                     </div>
                   </div>
 
-                  <div ref={teleprompterRef} className="mt-3 max-h-48 overflow-y-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <p className="text-[1.15rem] font-medium leading-8 text-white sm:text-[1.25rem]">{selectedShot.script_text}</p>
+                  <div
+                    ref={teleprompterRef}
+                    className="mt-3 max-h-[26svh] overflow-y-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    <p className="text-[1.65rem] leading-[1.3] font-semibold tracking-tight text-white/72 sm:text-[2rem]">
+                      {selectedShot.script_text}
+                    </p>
                   </div>
 
                   <div className="mt-4 border-t border-white/10 pt-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">ต้องถ่ายอะไร</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-200">{selectedShot.visual_description}</p>
+                    <div className="pointer-events-auto flex items-center gap-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">ช้า</span>
+                      <input
+                        type="range"
+                        min={8}
+                        max={40}
+                        step={2}
+                        value={scrollSpeed}
+                        onChange={(event) => setScrollSpeed(Number(event.target.value))}
+                        className="w-full accent-[#bb95ff]"
+                      />
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">เร็ว</span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-200">{selectedShot.visual_description}</p>
                   </div>
                 </div>
               ) : (
@@ -498,33 +533,63 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
                 </div>
               )}
 
-              <div className="pointer-events-auto grid grid-cols-[1fr_auto] items-center gap-3 rounded-[2rem] border border-white/10 bg-[#101322]/68 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
-                <div className="space-y-1 px-2">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Mic className="h-4 w-4 text-[#bb95ff]" />
-                    อัดกล้องและไมค์พร้อมกัน
+              <div className="pointer-events-auto rounded-[2rem] border border-white/10 bg-[#101322]/68 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <Button
+                    type="button"
+                    onClick={() => setFacingMode((current) => (current === 'environment' ? 'user' : 'environment'))}
+                    className="h-12 rounded-full bg-white/10 px-4 text-white hover:bg-white/16"
+                  >
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    สลับกล้อง
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleToggleTorch}
+                    disabled={!torchSupported}
+                    className="h-12 rounded-full bg-white/10 px-4 text-white hover:bg-white/16 disabled:opacity-40"
+                  >
+                    {torchOn ? <ZapOff className="mr-2 h-4 w-4" /> : <Zap className="mr-2 h-4 w-4" />}
+                    {torchOn ? 'ปิดแฟลช' : 'แฟลช'}
+                  </Button>
+                </div>
+
+                {zoomCapability ? (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                      <span>{zoomCapability.min.toFixed(1)}x</span>
+                      <span className="text-white">Zoom {zoomLevel.toFixed(1)}x</span>
+                      <span>{zoomCapability.max.toFixed(1)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={zoomCapability.min}
+                      max={zoomCapability.max}
+                      step={zoomCapability.step}
+                      value={zoomLevel}
+                      onChange={(event) => { void handleZoomRangeChange(Number(event.target.value)); }}
+                      className="w-full accent-white"
+                    />
                   </div>
-                  <p className="text-xs leading-6 text-slate-300">
-                    {lastUploadMessage || 'กดเริ่มอัดเพื่อถ่ายช็อตนี้ แล้วระบบจะส่งคลิปกลับเข้าคอมอัตโนมัติ'}
-                  </p>
-                </div>
+                ) : null}
 
-                <Button
-                  type="button"
-                  onClick={isRecording ? handleStopRecording : handleStartRecording}
-                  disabled={!selectedShot || !!cameraError || isSending}
-                  className={`h-20 w-20 rounded-full px-0 text-white shadow-xl ${isRecording ? 'bg-[#c65478] hover:bg-[#d66386]' : 'bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] hover:opacity-95'}`}
-                >
-                  {isSending ? <Loader2 className="h-7 w-7 animate-spin" /> : isRecording ? <CircleStop className="h-8 w-8" /> : <PlayCircle className="h-8 w-8" />}
-                </Button>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                  <div className="text-xs leading-5 text-slate-300">
+                    {countdown != null ? `เริ่มอัดใน ${countdown}...` : lastUploadMessage || (isRecording ? 'กำลังอัดอยู่' : 'พร้อมอัดคลิปช็อตนี้')}
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={isRecording ? handleStopRecording : handleStartRecording}
+                    disabled={!selectedShot || !!cameraError || isSending || countdown != null}
+                    className={`h-24 w-24 rounded-full px-0 text-white shadow-xl ${isRecording ? 'bg-[#c65478] hover:bg-[#d66386]' : 'bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] hover:opacity-95'}`}
+                  >
+                    {isSending ? <Loader2 className="h-8 w-8 animate-spin" /> : isRecording ? <CircleStop className="h-9 w-9" /> : <PlayCircle className="h-9 w-9" />}
+                  </Button>
+                  <div className="justify-self-end rounded-full border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold text-slate-200">
+                    1080x1920 · 25fps
+                  </div>
+                </div>
               </div>
-
-              {isRecording ? (
-                <div className="pointer-events-none inline-flex items-center gap-2 rounded-full bg-[#c65478]/82 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-[#c65478]/30 backdrop-blur-xl">
-                  <Camera className="h-4 w-4" />
-                  กำลังอัดอยู่ กดปุ่มอีกครั้งเพื่อหยุดและส่งคลิป
-                </div>
-              ) : null}
 
               {sessionPayload ? (
                 <div className="pointer-events-none inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs text-slate-200 backdrop-blur-xl">
@@ -534,6 +599,15 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
               ) : null}
             </div>
           </div>
+
+          {countdown != null ? (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/18">
+              <div className="rounded-full border border-white/20 bg-black/45 px-10 py-7 text-center shadow-2xl shadow-black/40 backdrop-blur-xl">
+                <div className="text-[5rem] font-black leading-none text-white sm:text-[6rem]">{countdown}</div>
+                <div className="mt-2 text-sm font-semibold uppercase tracking-[0.25em] text-[#e7dcff]">เตรียมอัด</div>
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </div>

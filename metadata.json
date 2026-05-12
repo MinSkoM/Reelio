@@ -1,5 +1,5 @@
 {
-  "name": "CapCut Companion",
+  "name": "Reelio",
   "description": "Zero-cost workflow tool for content creators. AI script generation, phone-to-PC teleprompter sync via WebRTC, and local media export for CapCut.",
   "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["Real-time communication", "AI generation", "Local 1media storage"]

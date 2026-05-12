@@ -9,7 +9,8 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
-import { ArrowRight, Download, FolderOpen, Library, QrCode, RefreshCw, Smartphone, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { ArrowRight, Download, FolderOpen, Library, QrCode, RefreshCw, Share2, Smartphone, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { getProgressSummary, markShotCompleted, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 type LibraryItem = {
   id: string;
@@ -78,6 +79,26 @@ function downloadBlob(content: Blob, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+async function shareBlob(content: Blob, fileName: string, title: string) {
+  const file = new File([content], fileName, { type: content.type || 'application/octet-stream' });
+  const nav = navigator as Navigator & { canShare?: (data?: ShareData) => boolean };
+
+  if (typeof nav.share === 'function') {
+    try {
+      if (!nav.canShare || nav.canShare({ files: [file] })) {
+        await nav.share({ title, files: [file] });
+        return true;
+      }
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export default function ProductionStudio() {
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -88,6 +109,7 @@ export default function ProductionStudio() {
   const [mobileStatus, setMobileStatus] = useState('ยังไม่มีมือถือเชื่อม');
   const [receivedVideos, setReceivedVideos] = useState<VideoRecord[]>([]);
   const [lastMessage, setLastMessage] = useState('');
+  const [progressVersion, setProgressVersion] = useState(0);
   const connectionRef = useRef<DataConnection | null>(null);
   const selectedItemRef = useRef<LibraryItem | null>(null);
   const selectedShotRef = useRef<number | null>(null);
@@ -104,6 +126,16 @@ export default function ProductionStudio() {
 
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  useEffect(() => {
+    const refreshProgress = () => setProgressVersion((current) => current + 1);
+    window.addEventListener(SHOT_PROGRESS_EVENT, refreshProgress as EventListener);
+    window.addEventListener('storage', refreshProgress);
+    return () => {
+      window.removeEventListener(SHOT_PROGRESS_EVENT, refreshProgress as EventListener);
+      window.removeEventListener('storage', refreshProgress);
+    };
   }, []);
 
   const selectedItem = useMemo(
@@ -223,7 +255,9 @@ export default function ProductionStudio() {
               mimeType: message.mimeType,
               shotType: message.shotType,
             });
+            markShotCompleted(message.itemId, message.shotOrder, true);
             await refreshVideosForProject(message.itemId);
+            setProgressVersion((current) => current + 1);
             setLastMessage(`รับคลิปช็อต ${message.shotOrder} เข้าคอมแล้ว`);
           })();
         }
@@ -267,6 +301,11 @@ export default function ProductionStudio() {
     }, {});
   }, [receivedVideos]);
 
+  const selectedProgress = useMemo(() => {
+    if (!selectedItem) return { completed: 0, total: 0, percent: 0 };
+    return getProgressSummary(selectedItem.id, selectedItem.script.shots.length);
+  }, [selectedItem, progressVersion, receivedVideos.length]);
+
   const handleSelectShot = (orderIndex: number) => {
     const next = selectedShotOrder === orderIndex ? null : orderIndex;
     setSelectedShotOrder(next);
@@ -285,8 +324,8 @@ export default function ProductionStudio() {
     }
   };
 
-  const handleExportZip = async () => {
-    if (!selectedItem || receivedVideos.length === 0) return;
+  const buildZipBlob = async () => {
+    if (!selectedItem || receivedVideos.length === 0) return null;
 
     const zip = new JSZip();
     const manifest = [
@@ -298,24 +337,47 @@ export default function ProductionStudio() {
     receivedVideos.forEach((video, index) => {
       const extension = video.mimeType?.includes('mp4') ? 'mp4' : 'webm';
       const shotNumber = String(video.shotId).padStart(2, '0');
-      const fileName = `${String(index + 1).padStart(2, '0')}-shot-${shotNumber}.${extension}`;
+      const fileName = `shot-${shotNumber}.${extension}`;
       zip.file(fileName, video.blob);
       manifest.push(`${fileName} | shot ${video.shotId} | ${video.shotType ? getShotTypeLabel(video.shotType) : 'คลิป'}`);
     });
 
     zip.file('manifest.txt', manifest.join('\n'));
     const blob = await zip.generateAsync({ type: 'blob' });
-    downloadBlob(blob, `${buildExportFileBase()}-production-clips.zip`);
+    return { blob, fileName: `${buildExportFileBase()}-production-clips.zip` };
   };
 
+  const handleExportZip = async () => {
+    const result = await buildZipBlob();
+    if (!result) return;
+    downloadBlob(result.blob, result.fileName);
+  };
+
+  const handleShareZip = async () => {
+    const result = await buildZipBlob();
+    if (!result) return;
+    const shared = await shareBlob(result.blob, result.fileName, 'Production clips');
+    if (!shared) {
+      downloadBlob(result.blob, result.fileName);
+    }
+  };
+
+  const handleShareVideo = async (video: VideoRecord) => {
+    const shared = await shareBlob(video.blob, video.fileName, `Shot ${video.shotId}`);
+    if (!shared) {
+      downloadBlob(video.blob, video.fileName);
+    }
+  };
+
+
   return (
-    <div className="mx-auto mt-10 max-w-6xl space-y-6 animate-in fade-in duration-500">
+    <div className="mx-auto mt-6 max-w-6xl space-y-5 animate-in fade-in duration-500 sm:mt-8">
       <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
         <CardHeader className="space-y-4 border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-bold tracking-wide text-[#e7dcff]">PC Control Center</p>
-              <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">เชื่อมมือถือเพื่อถ่ายช็อตแล้วส่งกลับเข้าคอม</CardTitle>
+              <CardTitle className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">เชื่อมมือถือเพื่อถ่ายช็อตแล้วส่งกลับเข้าคอม</CardTitle>
             </div>
             <Button
               type="button"
@@ -332,7 +394,7 @@ export default function ProductionStudio() {
           </p>
         </CardHeader>
 
-        <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <CardContent className="grid gap-4 p-4 sm:gap-6 sm:p-6 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-[#5c6078] p-5 shadow-lg">
             <div className="flex items-center gap-2 text-white">
               <Library className="h-5 w-5 text-[#dcc8ff]" />
@@ -370,7 +432,7 @@ export default function ProductionStudio() {
               <h3 className="text-xl font-bold">2. สแกน QR จากมือถือ</h3>
             </div>
             <div className="grid gap-4 md:grid-cols-[220px_1fr] md:items-center">
-              <div className="rounded-[1.5rem] bg-white p-4">
+              <div className="mx-auto w-fit rounded-[1.5rem] bg-white p-4">
                 {sessionUrl ? <QRCode value={sessionUrl} size={188} className="h-auto w-full" /> : null}
               </div>
               <div className="space-y-3 text-slate-200">
@@ -403,7 +465,7 @@ export default function ProductionStudio() {
       </Card>
 
       {selectedItem ? (
-        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
           <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
             <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -411,12 +473,18 @@ export default function ProductionStudio() {
                   <p className="text-sm font-bold tracking-wide text-[#e7dcff]">3. เลือกช็อตที่จะถ่าย</p>
                   <CardTitle className="text-2xl font-black tracking-tight text-white">{selectedItem.title}</CardTitle>
                 </div>
-                <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
-                  <FolderOpen className="h-4 w-4" />
-                  {selectedItem.script.shots.length} ช็อต
-                </div>
+                
               </div>
               <p className="max-w-3xl text-base leading-7 text-slate-200">{selectedItem.prompt}</p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-200">
+                  <span>ถ่ายแล้ว {selectedProgress.completed}/{selectedProgress.total} ช็อต</span>
+                  <span>{selectedProgress.percent}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-black/20">
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#a661d6] via-[#8d65e7] to-[#6d66da] transition-all duration-500" style={{ width: `${selectedProgress.percent}%` }} />
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3 p-6 sm:p-8">
               {selectedItem.script.shots
@@ -425,12 +493,13 @@ export default function ProductionStudio() {
                 .map((shot) => {
                   const isActive = selectedShotOrder === shot.order_index;
                   const count = shotCounts[String(shot.order_index)] || 0;
+                  const isCompleted = count > 0;
                   return (
                     <button
                       key={shot.order_index}
                       type="button"
                       onClick={() => handleSelectShot(shot.order_index)}
-                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isActive ? 'border-[#c29aff]/40 bg-[#8d65e7]/16' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isCompleted ? 'border-white/10 bg-[#565b72] opacity-75' : isActive ? 'border-[#c29aff]/40 bg-[#8d65e7]/16' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="space-y-3">
@@ -441,8 +510,8 @@ export default function ProductionStudio() {
                             <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
                               ช็อต {shot.order_index}
                             </span>
-                            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-200">
-                              รับคลิปแล้ว {count} ไฟล์
+                            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${isCompleted ? 'border-white/10 bg-black/20 text-white' : 'border-white/10 bg-white/5 text-slate-200'}`}>
+                              {isCompleted ? 'ถ่ายแล้ว' : `รับคลิปแล้ว ${count} ไฟล์`}
                             </span>
                           </div>
                           <p className="text-base leading-7 text-white">{shot.script_text}</p>
@@ -475,6 +544,15 @@ export default function ProductionStudio() {
                   <Download className="mr-2 h-4 w-4" />
                   Export ZIP
                 </Button>
+                <Button
+                  type="button"
+                  onClick={() => { void handleShareZip(); }}
+                  disabled={receivedVideos.length === 0}
+                  className="rounded-2xl border border-white/10 bg-[#2f334b] px-4 text-white hover:bg-[#3b4057]"
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Share file
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-3 p-6 sm:p-8">
@@ -506,6 +584,14 @@ export default function ProductionStudio() {
                         >
                           <Download className="mr-2 h-4 w-4" />
                           ดาวน์โหลดไฟล์นี้
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => { void handleShareVideo(video); }}
+                          className="rounded-2xl border border-white/10 bg-[#8d65e7]/18 px-4 text-white hover:bg-[#8d65e7]/26"
+                        >
+                          <Share2 className="mr-2 h-4 w-4" />
+                          Share file
                         </Button>
                         <Button
                           type="button"

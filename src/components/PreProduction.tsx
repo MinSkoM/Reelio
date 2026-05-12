@@ -6,14 +6,13 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { ScrollArea } from './ui/scroll-area';
 import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen } from 'lucide-react';
+import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
 const durationOptions = [15, 30, 45, 60];
-const SHOT_PROGRESS_STORAGE_KEY = 'tudtor-shot-progress';
 const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
 type Mode = 'brief' | 'script';
@@ -82,15 +81,6 @@ function buildExportFileBase() {
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
   ].join('');
-}
-
-function buildShotStorageKey(script: GeneratedScript) {
-  return [
-    script.title,
-    ...script.shots
-      .sort((a, b) => a.order_index - b.order_index)
-      .map((shot) => `${shot.order_index}:${shot.shot_type}:${shot.script_text}:${shot.visual_description}`),
-  ].join('|');
 }
 
 function getTopicDetailConfig(topic: string) {
@@ -208,36 +198,31 @@ export default function PreProduction() {
   const effectiveTopic = customTopic.trim() || topic;
   const effectiveDetail = topicDetail.trim();
   const topicDetailConfig = useMemo(() => getTopicDetailConfig(topic), [topic]);
-  const shotStorageKey = useMemo(() => (script ? buildShotStorageKey(script) : ''), [script]);
 
   useEffect(() => {
-    if (!script || !shotStorageKey || typeof window === 'undefined') {
+    const activeId = activeLibraryItemId;
+    if (!script || !activeId || typeof window === 'undefined') {
       setCompletedShots({});
       return;
     }
 
-    try {
-      const raw = window.localStorage.getItem(SHOT_PROGRESS_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      const savedState = parsed?.[shotStorageKey];
-      setCompletedShots(savedState && typeof savedState === 'object' ? savedState : {});
-    } catch {
-      setCompletedShots({});
-    }
-  }, [script, shotStorageKey]);
+    const syncProgress = () => {
+      setCompletedShots(getShotProgress(activeId));
+    };
+
+    syncProgress();
+    window.addEventListener('storage', syncProgress);
+    window.addEventListener(SHOT_PROGRESS_EVENT, syncProgress as EventListener);
+    return () => {
+      window.removeEventListener('storage', syncProgress);
+      window.removeEventListener(SHOT_PROGRESS_EVENT, syncProgress as EventListener);
+    };
+  }, [script, activeLibraryItemId]);
 
   useEffect(() => {
-    if (!script || !shotStorageKey || typeof window === 'undefined') return;
-
-    try {
-      const raw = window.localStorage.getItem(SHOT_PROGRESS_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      parsed[shotStorageKey] = completedShots;
-      window.localStorage.setItem(SHOT_PROGRESS_STORAGE_KEY, JSON.stringify(parsed));
-    } catch {
-      // Keep checklist usable without storage.
-    }
-  }, [completedShots, script, shotStorageKey]);
+    if (!script || !activeLibraryItemId || typeof window === 'undefined') return;
+    setShotProgress(activeLibraryItemId, completedShots);
+  }, [completedShots, script, activeLibraryItemId]);
 
   const prompt = useMemo(() => {
     if (mode === 'script') {
@@ -256,6 +241,25 @@ export default function PreProduction() {
     () => libraryItems.find((item) => item.id === activeLibraryItemId) || null,
     [libraryItems, activeLibraryItemId],
   );
+
+  const libraryProgress = useMemo(() => {
+    return Object.fromEntries(
+      libraryItems.map((item) => [item.id, getProgressSummary(item.id, item.script.shots.length)]),
+    );
+  }, [libraryItems, completedShots]);
+
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refreshLibrary = () => setLibraryItems(loadLibrary());
+    const refreshProgress = () => setCompletedShots((current) => ({ ...current }));
+    window.addEventListener('storage', refreshLibrary);
+    window.addEventListener(SHOT_PROGRESS_EVENT, refreshProgress as EventListener);
+    return () => {
+      window.removeEventListener('storage', refreshLibrary);
+      window.removeEventListener(SHOT_PROGRESS_EVENT, refreshProgress as EventListener);
+    };
+  }, []);
 
   const persistLibraryItem = (item: LibraryItem) => {
     const nextItems = [item, ...libraryItems.filter((entry) => entry.id !== item.id)];
@@ -346,7 +350,7 @@ export default function PreProduction() {
     ];
 
     downloadFile(lines.join('\n'), `${buildExportFileBase()}.txt`, 'text/plain;charset=utf-8');
-  };
+  };  
 
   const formatSrtTimestamp = (totalSeconds: number) => {
     const hours = Math.floor(totalSeconds / 3600);
@@ -476,6 +480,18 @@ export default function PreProduction() {
                       </div>
                       <p className="text-2xl font-bold text-white">{item.title}</p>
                       <p className="text-sm leading-6 text-slate-200">{item.prompt}</p>
+                      <div className="space-y-2 pt-2">
+                        <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-200">
+                          <span>ถ่ายแล้ว {libraryProgress[item.id]?.completed || 0}/{item.script.shots.length} ช็อต</span>
+                          <span>{libraryProgress[item.id]?.percent || 0}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-black/20">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-[#a661d6] via-[#8d65e7] to-[#6d66da] transition-all duration-500"
+                            style={{ width: `${libraryProgress[item.id]?.percent || 0}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
                     <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
                       <FolderOpen className="h-4 w-4" />
@@ -527,15 +543,6 @@ export default function PreProduction() {
                 >
                   <Download className="mr-2 h-4 w-4" />
                   ดาวน์โหลด TXT
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleDownloadSrt}
-                  className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
-                >
-                  <Captions className="mr-2 h-4 w-4" />
-                  ดาวน์โหลด SRT
                 </Button>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
