@@ -112,6 +112,10 @@ function getSupportedRecorderMimeType() {
   return '';
 }
 
+function isMp4MimeType(mimeType: string) {
+  return mimeType.toLowerCase().includes('mp4');
+}
+
 export default function MobileProduction({ sessionId, mock = false }: { sessionId: string; mock?: boolean }) {
   const [connectionStatus, setConnectionStatus] = useState(mock ? 'Mock mode พร้อมดู UI โดยไม่เชื่อมคอม' : 'กำลังเชื่อมกับคอม');
   const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(mock ? MOCK_SESSION_PAYLOAD : null);
@@ -386,7 +390,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
           buffer,
         });
 
-        setLastUploadMessage(`ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว`);
+        setLastUploadMessage(isMp4MimeType(mimeType) ? `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว (MP4)` : `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว แต่เครื่องนี้อัดได้เป็น ${mimeType}`);
         setIsSending(false);
 
         const sortedShots = sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index);
@@ -400,7 +404,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
       recorder.start();
       setIsRecording(true);
-      setLastUploadMessage('กำลังอัดคลิปอยู่');
+      setLastUploadMessage(isMp4MimeType(recorder.mimeType || supportedMimeType || '') ? 'กำลังอัดคลิปอยู่ (MP4)' : `กำลังอัดคลิปอยู่ (${recorder.mimeType || supportedMimeType || 'video/webm'})`);
     } catch (error: any) {
       setCameraError(error?.message || 'เริ่มอัดคลิปไม่สำเร็จ');
       sendMessage({ type: 'mobile-error', message: error?.message || 'เริ่มอัดคลิปไม่สำเร็จ' });

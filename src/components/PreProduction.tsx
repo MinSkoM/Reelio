@@ -12,7 +12,7 @@ import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVE
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
-const durationOptions = [15, 30, 45, 60];
+const durationOptions = [15, 30, 45, 60, 90, 120];
 const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
 type Mode = 'brief' | 'script';
@@ -146,8 +146,8 @@ function saveLibrary(items: LibraryItem[]) {
   window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(items));
 }
 
-export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibraryViewTick?: number }) {
-  const [pageView, setPageView] = useState<PageView>('editor');
+export default function PreProduction({ initialPageView = 'editor' }: { initialPageView?: 'editor' | 'library' }) {
+  const [pageView, setPageView] = useState<PageView>(initialPageView);
   const [mode, setMode] = useState<Mode>('brief');
   const [topic, setTopic] = useState(topicOptions[0]);
   const [topicDetail, setTopicDetail] = useState('');
@@ -164,6 +164,7 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [activeLibraryItemId, setActiveLibraryItemId] = useState<string | null>(null);
   const [completedShots, setCompletedShots] = useState<Record<number, boolean>>({});
+  const [progressVersion, setProgressVersion] = useState(0);
   const [quotaStatus, setQuotaStatus] = useState<QuotaStatus>({
     title: 'กำลังเช็กโควต้า',
     statusType: 'ok',
@@ -176,10 +177,12 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
   }, []);
 
   useEffect(() => {
-    if (forceLibraryViewTick > 0) {
-      setPageView('library');
-    }
-  }, [forceLibraryViewTick]);
+    setPageView((current) => {
+      if (initialPageView === 'library') return 'library';
+      if (current === 'shot-list') return current;
+      return 'editor';
+    });
+  }, [initialPageView]);
 
   useEffect(() => {
     let active = true;
@@ -215,6 +218,7 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
 
     const syncProgress = () => {
       setCompletedShots(getShotProgress(activeId));
+      setProgressVersion((current) => current + 1);
     };
 
     syncProgress();
@@ -225,11 +229,6 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
       window.removeEventListener(SHOT_PROGRESS_EVENT, syncProgress as EventListener);
     };
   }, [script, activeLibraryItemId]);
-
-  useEffect(() => {
-    if (!script || !activeLibraryItemId || typeof window === 'undefined') return;
-    setShotProgress(activeLibraryItemId, completedShots);
-  }, [completedShots, script, activeLibraryItemId]);
 
   const prompt = useMemo(() => {
     if (mode === 'script') {
@@ -253,13 +252,13 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
     return Object.fromEntries(
       libraryItems.map((item) => [item.id, getProgressSummary(item.id, item.script.shots.length)]),
     );
-  }, [libraryItems, completedShots]);
+  }, [libraryItems, progressVersion]);
 
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const refreshLibrary = () => setLibraryItems(loadLibrary());
-    const refreshProgress = () => setCompletedShots((current) => ({ ...current }));
+    const refreshProgress = () => setProgressVersion((current) => current + 1);
     window.addEventListener('storage', refreshLibrary);
     window.addEventListener(SHOT_PROGRESS_EVENT, refreshProgress as EventListener);
     return () => {
@@ -299,6 +298,8 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
       };
 
       setScript(nextScript);
+      setCompletedShots({});
+      setProgressVersion((current) => current + 1);
       persistLibraryItem(libraryItem);
       setPageView('shot-list');
       setQuotaStatus(quotaToDisplay(response.quota));
@@ -317,6 +318,7 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
   const openLibraryItem = (item: LibraryItem) => {
     setScript(item.script);
     setActiveLibraryItemId(item.id);
+    setCompletedShots(getShotProgress(item.id));
     setPageView('shot-list');
   };
 
@@ -335,10 +337,18 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
   };
 
   const toggleShotCompleted = (orderIndex: number) => {
-    setCompletedShots((current) => ({
-      ...current,
-      [orderIndex]: !current[orderIndex],
-    }));
+    if (!activeLibraryItemId) return;
+
+    setCompletedShots((current) => {
+      const next = {
+        ...current,
+        [orderIndex]: !current[orderIndex],
+      };
+      setShotProgress(activeLibraryItemId, next);
+      return next;
+    });
+
+    setProgressVersion((current) => current + 1);
   };
 
   const downloadFile = (content: string, fileName: string, type: string) => {
@@ -501,7 +511,7 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
         </div>
 
         <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
-          <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
+          <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-2 pt-2 sm:px-8">
             <p className="text-sm font-bold tracking-wide text-[#e7dcff]">คลังงาน</p>
             <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">สคริปต์และช็อตลิสต์ที่สร้างไว้</CardTitle>
             <p className="max-w-3xl text-base leading-7 text-slate-200">ทุกงานที่สร้างจากหน้านี้จะถูกเก็บไว้ในเครื่องของคุณ และสามารถเปิดกลับมาดูช็อตลิสต์ต่อได้จากหน้านี้</p>
@@ -513,14 +523,12 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
               </div>
             ) : (
               libraryItems.map((item) => (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  onClick={() => openLibraryItem(item)}
                   className="w-full rounded-[1.5rem] border border-white/10 bg-white/5 p-5 text-left transition-all duration-300 hover:bg-white/10"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-2">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge className="bg-[#8d65e7] text-white">{item.mode === 'brief' ? 'วางแผนทั้งหมด' : 'สร้างจากสคริปต์'}</Badge>
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
@@ -542,20 +550,27 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
                         </div>
                       </div>
                     </div>
-                    <div className="inline-flex items-center gap-2 border border-white/10 rounded-full bg-[#8d65e7]/30 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
-                      <FolderOpen className="h-4 w-4" />
-                      เปิดดู {item.script.shots.length} ช็อต
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[190px]">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => openLibraryItem(item)}
+                        className="justify-center rounded-2xl border-white/10 bg-[#8d65e7]/30 px-4 py-3 text-sm font-semibold text-[#efe7ff] hover:bg-[#8d65e7]/40"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        เปิดดู {item.script.shots.length} ช็อต
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => deleteLibraryItem(item)}
+                        className="justify-center rounded-2xl border-white/10 bg-red-500/40 px-4 py-3 text-sm font-semibold text-slate-100 hover:bg-red-500/30"
+                      >
+                        ลบ
+                      </Button>
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => deleteLibraryItem(item)}
-                      className="bg-red-500/40 text-red-400 hover:bg-red-500/30 border-white/10 px-4 text-slate-100"
-                    >
-                      ลบ
-                    </Button>
                   </div>
-                </button>
+                </div>
               ))
             )}
           </CardContent>
@@ -676,20 +691,18 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
                         </div>
                       </div>
                     </div>
-
-                    <label className={`inline-flex w-full cursor-pointer items-center justify-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-300 sm:w-auto ${
-                      isCompleted
-                        ? 'border-white/10 bg-[#474c63] text-white'
-                        : 'border-[#a98eff]/20 bg-[#8d65e7]/14 text-[#efe7ff]'
-                    }`}>
-                      <input
-                        type="checkbox"
-                        checked={isCompleted}
-                        onChange={() => toggleShotCompleted(shot.order_index)}
-                        className="h-4 w-4 rounded border-white/20 bg-transparent accent-[#6d5bd0]"
-                      />
-                      ถ่ายเสร็จแล้ว
-                    </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => toggleShotCompleted(shot.order_index)}
+                      className={`inline-flex min-h-14 w-full min-w-[180px] cursor-pointer items-center justify-center rounded-2xl border px-6 py-4 text-base font-bold transition-all duration-300 active:scale-[0.98] sm:w-auto ${
+                        isCompleted
+                          ? 'border-white/10 bg-white text-[#2f334b] shadow-md'
+                          : 'border-[#a98eff]/20 bg-[#8d65e7]/18 text-[#efe7ff] hover:bg-[#8d65e7]/28'
+                      }`}
+                    >
+                      {isCompleted ? 'ยกเลิกว่าถ่ายเสร็จแล้ว' : 'ถ่ายเสร็จแล้ว'}
+                    </Button>
                   </div>
                 </div>
               );
@@ -720,15 +733,6 @@ export default function PreProduction({ forceLibraryViewTick = 0 }: { forceLibra
               ) : null}
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setPageView('library')}
-            className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
-          >
-            <Library className="mr-2 h-4 w-4" />
-            ไปดูในคลัง
-          </Button>
         </div>
       </div>
 

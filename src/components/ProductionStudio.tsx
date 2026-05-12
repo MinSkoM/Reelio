@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { ArrowRight, Download, FolderOpen, Library, QrCode, RefreshCw, Share2, Smartphone, Trash2, Wifi, WifiOff } from 'lucide-react';
-import { getProgressSummary, markShotCompleted, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
+import { getProgressSummary, getShotProgress, markShotCompleted, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 type LibraryItem = {
   id: string;
@@ -68,6 +68,10 @@ function buildExportFileBase() {
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
   ].join('');
+}
+
+function isMp4MimeType(mimeType?: string) {
+  return Boolean(mimeType && mimeType.toLowerCase().includes('mp4'));
 }
 
 function downloadBlob(content: Blob, fileName: string) {
@@ -143,6 +147,11 @@ export default function ProductionStudio() {
     [libraryItems, selectedItemId],
   );
 
+  const selectedShotProgress = useMemo(() => {
+    if (!selectedItem) return {} as Record<number, boolean>;
+    return getShotProgress(selectedItem.id);
+  }, [selectedItem, progressVersion]);
+
   useEffect(() => {
     if (selectedItem && selectedItemId == null) {
       setSelectedItemId(selectedItem.id);
@@ -205,7 +214,7 @@ export default function ProductionStudio() {
     setMobileStatus('ยังไม่มีมือถือเชื่อม');
 
     peer.on('open', () => {
-      setHostStatus('คอมพร้อมแล้ว สแกน QR จากมือถือได้เลย');
+      setHostStatus('พร้อมแล้ว สแกน QR จากมือถือได้เลย');
     });
 
     peer.on('connection', (connection) => {
@@ -306,6 +315,8 @@ export default function ProductionStudio() {
     return getProgressSummary(selectedItem.id, selectedItem.script.shots.length);
   }, [selectedItem, progressVersion, receivedVideos.length]);
 
+  const allVideosAreMp4 = useMemo(() => receivedVideos.every((video) => isMp4MimeType(video.mimeType)), [receivedVideos]);
+
   const handleSelectShot = (orderIndex: number) => {
     const next = selectedShotOrder === orderIndex ? null : orderIndex;
     setSelectedShotOrder(next);
@@ -335,11 +346,11 @@ export default function ProductionStudio() {
     ];
 
     receivedVideos.forEach((video, index) => {
-      const extension = video.mimeType?.includes('mp4') ? 'mp4' : 'webm';
+      const extension = isMp4MimeType(video.mimeType) ? 'mp4' : 'webm';
       const shotNumber = String(video.shotId).padStart(2, '0');
       const fileName = `shot-${shotNumber}.${extension}`;
       zip.file(fileName, video.blob);
-      manifest.push(`${fileName} | shot ${video.shotId} | ${video.shotType ? getShotTypeLabel(video.shotType) : 'คลิป'}`);
+      manifest.push(`${fileName} | shot ${video.shotId} | ${video.shotType ? getShotTypeLabel(video.shotType) : 'คลิป'} | format: ${video.mimeType || 'unknown'}`);
     });
 
     zip.file('manifest.txt', manifest.join('\n'));
@@ -376,7 +387,7 @@ export default function ProductionStudio() {
         <CardHeader className="space-y-4 border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-bold tracking-wide text-[#e7dcff]">PC Control Center</p>
+              <p className="text-sm font-bold tracking-wide text-[#e7dcff]">Control Center</p>
               <CardTitle className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">เชื่อมมือถือเพื่อถ่ายช็อตแล้วส่งกลับเข้าคอม</CardTitle>
             </div>
             <Button
@@ -445,6 +456,11 @@ export default function ProductionStudio() {
                   {mobileStatus}
                 </div>
                 <div className="space-y-2">
+                {receivedVideos.length > 0 ? (
+                  <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${allVideosAreMp4 ? 'bg-emerald-400/15 text-emerald-100' : 'bg-amber-400/15 text-amber-100'}`}>
+                    {allVideosAreMp4 ? 'ไฟล์ที่รับกลับมาชุดนี้เป็น MP4' : 'มีบางไฟล์ที่เครื่องนี้อัดเป็น WebM ไม่ใช่ MP4'}
+                  </div>
+                ) : null}
                   <p className="text-sm font-semibold text-white">ลิงก์สำหรับมือถือ</p>
                   <p className="break-all rounded-2xl bg-[#2f334b] px-4 py-3 text-xs leading-6 text-slate-300">{sessionUrl || 'ยังไม่มีลิงก์ session'}</p>
                 </div>
@@ -484,7 +500,7 @@ export default function ProductionStudio() {
                 .map((shot) => {
                   const isActive = selectedShotOrder === shot.order_index;
                   const count = shotCounts[String(shot.order_index)] || 0;
-                  const isCompleted = count > 0;
+                  const isCompleted = Boolean(selectedShotProgress[shot.order_index]) || count > 0;
                   return (
                     <button
                       key={shot.order_index}
@@ -504,6 +520,11 @@ export default function ProductionStudio() {
                             <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${isCompleted ? 'border-white/10 bg-black/20 text-white' : 'border-white/10 bg-white/5 text-slate-200'}`}>
                               {isCompleted ? 'ถ่ายแล้ว' : `รับคลิปแล้ว ${count} ไฟล์`}
                             </span>
+                            {count > 0 ? (
+                              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${receivedVideos.find((video) => video.shotId === String(shot.order_index) && isMp4MimeType(video.mimeType)) ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-100' : 'border-amber-300/20 bg-amber-400/10 text-amber-100'}`}>
+                                {receivedVideos.find((video) => video.shotId === String(shot.order_index) && isMp4MimeType(video.mimeType)) ? 'MP4' : 'WebM'}
+                              </span>
+                            ) : null}
                           </div>
                           <p className="text-base leading-7 text-white">{shot.script_text}</p>
                           <p className="text-sm leading-6 text-slate-300">{shot.visual_description}</p>

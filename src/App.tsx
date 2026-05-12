@@ -5,11 +5,10 @@ import ProductionStudio from './components/ProductionStudio';
 import MobileProduction from './components/MobileProduction';
 import { Button } from './components/ui/button';
 
-type DesktopPage = 'prepro' | 'production';
+type DesktopPage = 'prepro' | 'library' | 'production';
 
 export default function App() {
   const [desktopPage, setDesktopPage] = useState<DesktopPage>('prepro');
-  const [openLibraryTick, setOpenLibraryTick] = useState(0);
 
   const mobileRoute = useMemo(() => {
     if (typeof window === 'undefined') return null;
@@ -59,16 +58,13 @@ export default function App() {
               className={`min-h-11 flex-1 rounded-2xl border px-4 text-sm sm:flex-none ${desktopPage === 'production' ? 'border-[#b48cff]/30 bg-[#8d65e7]/16 text-white' : 'border-white/10 bg-white/6 text-slate-300 hover:bg-white/10'}`}
             >
               <MonitorSmartphone className="mr-2 h-4 w-4" />
-              PC Control Center
+              Control Center
             </Button>
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                setDesktopPage('prepro');
-                setOpenLibraryTick((current) => current + 1);
-              }}
-              className="min-h-11 flex-1 rounded-2xl border border-white/10 bg-white/6 px-4 text-sm text-slate-300 hover:bg-white/10 sm:flex-none"
+              onClick={() => setDesktopPage('library')}
+              className={`min-h-11 flex-1 rounded-2xl border px-4 text-sm sm:flex-none ${desktopPage === 'library' ? 'border-[#b48cff]/30 bg-[#8d65e7]/16 text-white' : 'border-white/10 bg-white/6 text-slate-300 hover:bg-white/10'}`}
             >
               <Library className="mr-2 h-4 w-4" />
               คลังงาน
@@ -84,17 +80,19 @@ export default function App() {
               Reelio : your all-in-one content creation companion
             </p>
             <h1 className="text-4xl font-black tracking-tight text-white sm:text-6xl">
-              {desktopPage === 'prepro' ? 'Pre-Production' : 'PC Control Center'}
+              {desktopPage === 'prepro' ? 'Pre-Production' : desktopPage === 'library' ? 'คลังงาน' : 'Control Center'}
             </h1>
             <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
               {desktopPage === 'prepro'
                 ? 'เลือก brief แบบง่าย ๆ หรือวางสคริปต์ที่มีอยู่แล้ว ระบบจะช่วยแยกช็อต, บอกใจความที่ต้องพูด, และระบุภาพที่ควรถ่ายให้เห็นชัดขึ้น'
-                : 'เลือกสคริปต์จากคลัง เลือกช็อตที่จะถ่าย แล้วรับคลิปกลับเข้าคอมเพื่อเรียงและ export ออกได้ทันที'}
+                : desktopPage === 'library'
+                  ? 'รวมงานที่เคยสร้างไว้ในเบราว์เซอร์นี้ พร้อมเช็กความคืบหน้าของแต่ละงานและกลับเข้าไปจัดการช็อตต่อได้ทันที'
+                  : 'เลือกสคริปต์จากคลัง เลือกช็อตที่จะถ่าย แล้วรับคลิปกลับเข้าคอมเพื่อเรียงและ export ออกได้ทันที'}
             </p>
           </div>
         </section>
 
-        {desktopPage === 'prepro' ? <PreProduction forceLibraryViewTick={openLibraryTick} /> : <ProductionStudio />}
+        {desktopPage === 'production' ? <ProductionStudio /> : <PreProduction initialPageView={desktopPage === 'library' ? 'library' : 'editor'} />}
       </main>
     </div>
   );
