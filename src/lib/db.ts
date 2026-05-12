@@ -10,6 +10,9 @@ export interface VideoRecord {
   blob: Blob;
   fileName: string;
   createdAt: number;
+  durationMs?: number;
+  mimeType?: string;
+  shotType?: 'A-Roll' | 'B-Roll';
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
@@ -35,7 +38,7 @@ export async function saveVideo(record: VideoRecord) {
 export async function getVideosByProject(projectId: string): Promise<VideoRecord[]> {
   const db = await getDB();
   const all = await db.getAll(STORE_NAME);
-  return all.filter(v => v.projectId === projectId);
+  return all.filter((video) => video.projectId === projectId);
 }
 
 export async function deleteVideo(id: string) {
