@@ -1,18 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Peer, { type DataConnection } from 'peerjs';
-import { GeneratedScript } from '../services/geminiService';
-import { getShotTypeLabel } from '../lib/shotLabels';
-import { Button } from './ui/button';
-import { Badge } from './ui/badge';
-import { Camera, CameraOff, CheckCircle2, ChevronDown, CircleStop, Loader2, PlayCircle, RotateCcw, Smartphone, Wifi, WifiOff, Zap, ZapOff } from 'lucide-react';
-
-const RECORDER_MIME_TYPES = [
-  'video/mp4;codecs=h264,aac',
-  'video/webm;codecs=vp9,opus',
-  'video/webm;codecs=vp8,opus',
-  'video/webm',
-  'video/mp4',
-];
+import type { GeneratedScript } from '../services/geminiService';
+import { RotateCcw, CameraOff, Loader2, ChevronDown, Square, Zap, ZapOff } from 'lucide-react';
 
 type HostToMobileMessage =
   | { type: 'session-script'; itemId: string; title: string; prompt: string; script: GeneratedScript; selectedShotOrder: number | null }
@@ -48,6 +37,40 @@ type ZoomCapability = {
   step: number;
 };
 
+const RECORDER_MIME_TYPES = [
+  'video/mp4;codecs=h264,aac',
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+  'video/mp4',
+];
+
+const MOCK_SESSION_PAYLOAD: SessionPayload = {
+  itemId: 'mock-mobile-preview',
+  title: 'Mock Mobile Preview',
+  prompt: 'ใช้ดู UI กล้องแบบ mock โดยไม่ต้องเชื่อม session จริง',
+  selectedShotOrder: 1,
+  script: {
+    title: 'Mock Mobile Preview',
+    shots: [
+      {
+        order_index: 1,
+        shot_type: 'A-Roll',
+        script_text: 'ลองอ่านข้อความนี้เพื่อเช็กว่าตัว teleprompt ใหญ่พอ อ่านง่ายพอ และอยู่ตรงกลางจอเหมาะกับเวลาถือมือถือถ่ายจริงหรือยัง',
+        visual_description: 'กล้องเต็มจอ พื้นหลังดำ เน้นดูความชัดของตัวหนังสือและตำแหน่งปุ่มอัดด้านล่าง',
+        duration_seconds: 6,
+      },
+      {
+        order_index: 2,
+        shot_type: 'B-Roll',
+        script_text: 'ช็อตนี้ใช้ดูแถบซูม ปุ่มสลับกล้อง และปุ่มแฟลช ว่าจัดวางแล้วไม่บังมือเวลาจะกดอัดจริง',
+        visual_description: 'เช็กตำแหน่งคอนโทรลด้านล่าง และลองเปิดแผงเลือกช็อตว่าดูง่ายบนมือถือหรือไม่',
+        duration_seconds: 6,
+      },
+    ],
+  },
+};
+
 function buildClipFileName(orderIndex: number, mimeType: string) {
   const now = new Date();
   const stamp = [
@@ -69,34 +92,33 @@ function getCameraErrorMessage() {
   }
 
   if (!navigator.mediaDevices?.getUserMedia) {
-    return 'เบราว์เซอร์นี้ไม่รองรับการเปิดกล้องหรือเปิดจาก in-app browser ที่จำกัดสิทธิ์';
+    return 'เบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง หรือกำลังเปิดจาก in-app browser ที่จำกัดสิทธิ์';
   }
 
   return '';
 }
 
 function getTrackCapabilities(track: MediaStreamTrack) {
-  return ((track as MediaStreamTrack & { getCapabilities?: () => Record<string, any> }).getCapabilities?.() || {}) as Record<string, any>;
+  return ((track as MediaStreamTrack & { getCapabilities?: () => Record<string, unknown> }).getCapabilities?.() || {}) as Record<string, unknown>;
 }
 
 function getSupportedRecorderMimeType() {
   for (const mimeType of RECORDER_MIME_TYPES) {
-    if ((window as any).MediaRecorder?.isTypeSupported?.(mimeType)) {
+    if ((window as typeof window & { MediaRecorder?: typeof MediaRecorder }).MediaRecorder?.isTypeSupported?.(mimeType)) {
       return mimeType;
     }
   }
   return '';
 }
 
-export default function MobileProduction({ sessionId }: { sessionId: string }) {
-  const [connectionStatus, setConnectionStatus] = useState('กำลังเชื่อมกับคอม');
-  const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(null);
-  const [selectedShotOrder, setSelectedShotOrder] = useState<number | null>(null);
+export default function MobileProduction({ sessionId, mock = false }: { sessionId: string; mock?: boolean }) {
+  const [connectionStatus, setConnectionStatus] = useState(mock ? 'Mock mode พร้อมดู UI โดยไม่เชื่อมคอม' : 'กำลังเชื่อมกับคอม');
+  const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(mock ? MOCK_SESSION_PAYLOAD : null);
+  const [selectedShotOrder, setSelectedShotOrder] = useState<number | null>(mock ? 1 : null);
   const [cameraError, setCameraError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [isSending, setIsSending] = useState(false);
-  const [lastUploadMessage, setLastUploadMessage] = useState('');
+  const [lastUploadMessage, setLastUploadMessage] = useState(mock ? 'เปิดดูหน้า MobileProduction แบบ mock ได้เลย' : '');
   const [showShotPicker, setShowShotPicker] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [zoomCapability, setZoomCapability] = useState<ZoomCapability | null>(null);
@@ -105,6 +127,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
   const [torchOn, setTorchOn] = useState(false);
   const [autoScroll, setAutoScroll] = useState(false);
   const [scrollSpeed, setScrollSpeed] = useState(20);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -118,7 +141,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
   };
 
   const applyTrackState = async (track: MediaStreamTrack, nextZoom?: number, nextTorch?: boolean) => {
-    const advanced: Record<string, any> = {};
+    const advanced: Record<string, unknown> = {};
     if (typeof nextZoom === 'number' && zoomCapability) {
       advanced.zoom = Math.min(zoomCapability.max, Math.max(zoomCapability.min, nextZoom));
     }
@@ -126,10 +149,20 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
       advanced.torch = nextTorch;
     }
     if (Object.keys(advanced).length === 0) return;
-    await track.applyConstraints({ advanced: [advanced] });
+    await track.applyConstraints({ advanced: [advanced] as MediaTrackConstraintSet[] });
   };
 
   const setupCamera = async (preferredFacingMode: 'user' | 'environment') => {
+    if (mock) {
+      stopCurrentStream();
+      setCameraError('');
+      setTorchSupported(false);
+      setTorchOn(false);
+      setZoomCapability(null);
+      setZoomLevel(1);
+      return;
+    }
+
     const supportError = getCameraErrorMessage();
     if (supportError) {
       setCameraError(supportError);
@@ -146,7 +179,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
           facingMode: { ideal: preferredFacingMode },
           width: { ideal: 1080 },
           height: { ideal: 1920 },
-          aspectRatio: { ideal: 9 / 16 },
+          aspectRatio: { ideal: 16 / 9 },
           frameRate: { ideal: 25, max: 30 },
         },
         audio: true,
@@ -159,11 +192,12 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
 
       const [videoTrack] = stream.getVideoTracks();
       const capabilities = videoTrack ? getTrackCapabilities(videoTrack) : {};
+
       if (capabilities.zoom) {
         const nextCapability = {
-          min: Number(capabilities.zoom.min ?? 1),
-          max: Number(capabilities.zoom.max ?? 1),
-          step: Number(capabilities.zoom.step ?? 0.1),
+          min: Number((capabilities.zoom as { min?: number }).min ?? 1),
+          max: Number((capabilities.zoom as { max?: number }).max ?? 1),
+          step: Number((capabilities.zoom as { step?: number }).step ?? 0.1),
         };
         setZoomCapability(nextCapability);
         setZoomLevel(nextCapability.min);
@@ -175,13 +209,12 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
       setTorchSupported(Boolean(capabilities.torch));
       setTorchOn(false);
     } catch (error: any) {
-      const message = error?.message || 'เปิดกล้องไม่สำเร็จ';
       if (error?.name === 'NotAllowedError') {
         setCameraError('ยังไม่ได้อนุญาตกล้องหรือไมค์ ให้กดอนุญาตสิทธิ์แล้วเปิดใหม่อีกครั้ง');
       } else if (error?.name === 'NotReadableError') {
         setCameraError('กล้องกำลังถูกใช้งานอยู่ในแอปอื่น หรือระบบล็อกกล้องไว้ชั่วคราว');
       } else {
-        setCameraError(message);
+        setCameraError(error?.message || 'เปิดกล้องไม่สำเร็จ');
       }
     }
   };
@@ -192,9 +225,14 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
       stopCurrentStream();
       recorderRef.current?.stop();
     };
-  }, [facingMode]);
+  }, [facingMode, mock]);
 
   useEffect(() => {
+    if (mock) {
+      setConnectionStatus('Mock mode พร้อมดู UI โดยไม่เชื่อมคอม');
+      return;
+    }
+
     const peer = new Peer();
 
     peer.on('open', () => {
@@ -242,7 +280,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
       connectionRef.current?.close();
       peer.destroy();
     };
-  }, [sessionId]);
+  }, [mock, sessionId]);
 
   useEffect(() => {
     if (!autoScroll || !teleprompterRef.current) return;
@@ -254,6 +292,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
         setAutoScroll(false);
       }
     }, 100);
+
     return () => window.clearInterval(timer);
   }, [autoScroll, scrollSpeed, selectedShotOrder]);
 
@@ -264,12 +303,28 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
     setAutoScroll(false);
   }, [selectedShotOrder]);
 
+  useEffect(() => {
+    if (countdown == null) return;
+    if (countdown <= 0) {
+      setCountdown(null);
+      void startActualRecording();
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCountdown((current) => (current == null ? null : current - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [countdown]);
+
   const selectedShot = useMemo(() => {
     if (!sessionPayload || selectedShotOrder == null) return null;
     return sessionPayload.script.shots.find((shot) => shot.order_index === selectedShotOrder) || null;
   }, [sessionPayload, selectedShotOrder]);
 
   const sendMessage = (message: MobileToHostMessage) => {
+    if (mock) return;
     const connection = connectionRef.current;
     if (connection?.open) {
       connection.send(message);
@@ -282,16 +337,24 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
     sendMessage({ type: 'active-shot', orderIndex });
   };
 
-  const startActualRecording = () => {
+  const startActualRecording = async () => {
+    if (mock) {
+      setIsRecording(true);
+      setLastUploadMessage('Mock mode: จำลองเริ่มอัดคลิปแล้ว');
+      window.setTimeout(() => {
+        setIsRecording(false);
+        setLastUploadMessage(`Mock mode: จำลองถ่ายช็อต ${selectedShot?.order_index ?? '-'} เสร็จแล้ว`);
+      }, 1200);
+      return;
+    }
+
     const stream = streamRef.current;
     if (!stream || !selectedShot || !sessionPayload) return;
 
     try {
       chunksRef.current = [];
       const supportedMimeType = getSupportedRecorderMimeType();
-      const recorder = supportedMimeType
-        ? new MediaRecorder(stream, { mimeType: supportedMimeType })
-        : new MediaRecorder(stream);
+      const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
       recorderRef.current = recorder;
       const startedAt = Date.now();
 
@@ -308,6 +371,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const buffer = await blob.arrayBuffer();
         const durationMs = Date.now() - startedAt;
+
         sendMessage({
           type: 'video-upload',
           itemId: sessionPayload.itemId,
@@ -319,6 +383,7 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
           createdAt: Date.now(),
           buffer,
         });
+
         setLastUploadMessage(`ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว`);
         setIsSending(false);
 
@@ -341,27 +406,17 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
   };
 
   const handleStartRecording = () => {
-    if (!streamRef.current || !selectedShot || !sessionPayload || isSending || isRecording) return;
+    if ((!streamRef.current && !mock) || !selectedShot || !sessionPayload || isSending || isRecording) return;
+    setLastUploadMessage('เตรียมเริ่มอัดใน 3 วินาที');
     setCountdown(3);
   };
 
-  useEffect(() => {
-    if (countdown == null) return;
-
-    if (countdown <= 0) {
-      setCountdown(null);
-      startActualRecording();
+  const handleStopRecording = () => {
+    if (mock) {
+      setIsRecording(false);
+      setLastUploadMessage('Mock mode: หยุดการจำลองอัดคลิปแล้ว');
       return;
     }
-
-    const timer = window.setTimeout(() => {
-      setCountdown((current) => (current == null ? null : current - 1));
-    }, 1000);
-
-    return () => window.clearTimeout(timer);
-  }, [countdown]);
-
-  const handleStopRecording = () => {
     recorderRef.current?.stop();
     setIsRecording(false);
   };
@@ -392,174 +447,103 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
   return (
     <div className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       {cameraError ? (
-        <div className="relative z-10 flex min-h-[100svh] items-center justify-center px-5 py-8">
-          <div className="w-full max-w-md rounded-[2rem] border border-white/10 bg-[#16192a]/92 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl">
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-[#bb95ff] p-2 text-[#2a2d40]">
-                <CameraOff className="h-5 w-5" />
+        <div className="relative z-50 flex min-h-[100svh] items-center justify-center px-5">
+          <div className="w-full max-w-md rounded-[2.5rem] border border-white/20 bg-black/80 p-8 backdrop-blur-2xl">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="rounded-full bg-red-500/20 p-4 text-red-400">
+                <CameraOff className="h-8 w-8" />
               </div>
-              <div>
-                <p className="text-sm font-bold tracking-wide text-[#e7dcff]">เปิดกล้องไม่สำเร็จ</p>
-                <p className="text-xl font-black text-white">มือถือเครื่องนี้ยังใช้หน้าถ่ายไม่ได้</p>
+              <h2 className="text-2xl font-bold">ไม่สามารถเข้าถึงกล้องได้</h2>
+              <p className="text-sm text-slate-400">{cameraError}</p>
+              <div className="mt-4 w-full space-y-2 rounded-2xl bg-white/5 p-4 text-left text-xs text-slate-300">
+                <p>• ตรวจสอบการเชื่อมต่อ https</p>
+                <p>• ลองเปิดใน Safari หรือ Chrome</p>
+                <p>• ตรวจสอบการอนุญาตสิทธิ์กล้อง</p>
               </div>
-            </div>
-
-            <div className="mt-5 rounded-[1.5rem] border border-white/10 bg-white/6 p-4 text-sm leading-7 text-slate-200">
-              {cameraError}
-            </div>
-
-            <div className="mt-4 rounded-[1.5rem] border border-white/10 bg-[#212437] p-4 text-sm leading-7 text-slate-300">
-              วิธีแก้ที่มักได้ผล:
-              <div>1. เปิดผ่านลิงก์ `https` หรือ URL จาก Vercel</div>
-              <div>2. ถ้าเป็น in-app browser ให้ลองเปิดใน Safari หรือ Chrome ตรง ๆ</div>
-              <div>3. อนุญาตสิทธิ์กล้องและไมค์ให้เว็บนี้</div>
             </div>
           </div>
         </div>
       ) : (
         <>
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={`absolute inset-0 h-full w-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
-          />
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,9,16,0.54),rgba(8,9,16,0.08)_22%,rgba(8,9,16,0.08)_58%,rgba(8,9,16,0.72))]" />
+          {!mock ? (
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`absolute inset-0 h-full w-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
+            />
+          ) : (
+            <div className="absolute inset-0 bg-white" />
+          )}
 
-          <div className="relative z-20 flex min-h-[100svh] flex-col justify-between px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
-            <div className="space-y-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="rounded-[1.1rem] border border-white/10 bg-black/30 px-3 py-2 backdrop-blur-xl">
-                  <div className="flex items-center gap-2 text-xs text-slate-200 sm:text-sm">
-                    {connectionRef.current?.open ? <Wifi className="h-4 w-4 text-[#bb95ff]" /> : <WifiOff className="h-4 w-4 text-slate-300" />}
-                    {connectionStatus}
-                  </div>
-                </div>
-                {sessionPayload ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowShotPicker((current) => !current)}
-                    className="pointer-events-auto inline-flex items-center gap-2 rounded-[1.1rem] border border-white/10 bg-black/30 px-3 py-2 text-xs font-semibold text-white backdrop-blur-xl sm:text-sm"
-                  >
-                    <Smartphone className="h-4 w-4 text-[#bb95ff]" />
-                    ช็อต {selectedShotOrder ?? '-'}
-                    <ChevronDown className={`h-4 w-4 transition-transform ${showShotPicker ? 'rotate-180' : ''}`} />
-                  </button>
-                ) : null}
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/70" />
+
+          <div className="relative z-20 flex min-h-[100svh] flex-col justify-between px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 backdrop-blur-md">
+                <div className={`h-2 w-2 rounded-full ${mock || connectionRef.current?.open ? 'animate-pulse bg-green-400' : 'bg-red-400'}`} />
+                <span className="text-[10px] font-medium uppercase tracking-wider text-white/80">{connectionStatus}</span>
               </div>
 
-              {showShotPicker && sessionPayload ? (
-                <div className="pointer-events-auto max-h-[42svh] overflow-auto rounded-[1.5rem] border border-white/10 bg-[#16192a]/88 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
-                  <div className="mb-3 text-sm font-bold tracking-wide text-[#e7dcff]">เลือกช็อตที่จะถ่าย</div>
-                  <div className="space-y-2">
-                    {sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index).map((shot) => {
-                      const isActive = selectedShotOrder === shot.order_index;
-                      return (
-                        <button
-                          key={shot.order_index}
-                          type="button"
-                          onClick={() => handleChooseShot(shot.order_index)}
-                          className={`w-full rounded-[1.15rem] border p-3 text-left transition-all ${isActive ? 'border-[#c29aff]/45 bg-[#8d65e7]/18' : 'border-white/10 bg-white/5'}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Badge className={shot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}>
-                              {getShotTypeLabel(shot.shot_type)}
-                            </Badge>
-                            <span className="text-sm font-bold text-white">ช็อต {shot.order_index}</span>
-                          </div>
-                          <p className="mt-2 text-sm leading-6 text-slate-200">{shot.script_text}</p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+              {sessionPayload ? (
+                <button
+                  type="button"
+                  onClick={() => setShowShotPicker((current) => !current)}
+                  className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-1.5 backdrop-blur-md transition active:scale-95"
+                >
+                  <span className="text-xs font-bold text-[#bb95ff]">SHOT {selectedShotOrder ?? '-'}</span>
+                  <ChevronDown className={`h-4 w-4 transition-transform ${showShotPicker ? 'rotate-180' : ''}`} />
+                </button>
               ) : null}
             </div>
 
-            <div className="space-y-3">
+            {showShotPicker && sessionPayload ? (
+              <div className="absolute left-4 right-4 top-16 z-30 max-h-[40vh] overflow-auto rounded-3xl border border-white/10 bg-black/50 p-2 backdrop-blur-xl shadow-2xl">
+                <div className="space-y-1">
+                  {sessionPayload.script.shots
+                    .slice()
+                    .sort((a, b) => a.order_index - b.order_index)
+                    .map((shot) => (
+                      <button
+                        key={shot.order_index}
+                        type="button"
+                        onClick={() => handleChooseShot(shot.order_index)}
+                        className={`w-full rounded-2xl p-3 text-left transition-all ${selectedShotOrder === shot.order_index ? 'border border-white/20 bg-[#8d65e7]/35' : 'hover:bg-white/5'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-black opacity-50">#{shot.order_index}</span>
+                          <span className="line-clamp-1 text-xs font-bold">{shot.script_text}</span>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            ) : null}
+
+            <div className="pointer-events-none flex flex-1 flex-col justify-top px-2 mt-4">
               {selectedShot ? (
-                <div className="pointer-events-none rounded-[1.75rem] border border-white/10 bg-[#0f1220]/34 px-4 py-5 shadow-2xl shadow-black/40 backdrop-blur-md sm:px-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge className={selectedShot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}>
-                      {getShotTypeLabel(selectedShot.shot_type)}
-                    </Badge>
-                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-semibold text-white">
-                      ช็อต {selectedShot.order_index}
-                    </span>
-                    <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-semibold text-slate-200">
-                      {selectedShot.duration_seconds} วินาที
-                    </span>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#d9c6ff]">Teleprompt</p>
-                    <div className="pointer-events-auto flex items-center gap-2">
-                      <Button type="button" onClick={() => setAutoScroll((current) => !current)} className="h-8 rounded-full bg-white/10 px-3 text-xs text-white hover:bg-white/16 sm:h-9 sm:text-sm">
-                        {autoScroll ? 'หยุดเลื่อน' : 'เลื่อนอัตโนมัติ'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div
-                    ref={teleprompterRef}
-                    className="mt-3 max-h-[26svh] overflow-y-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                  >
-                    <p className="text-[1.65rem] leading-[1.3] font-semibold tracking-tight text-white/72 sm:text-[2rem]">
+                <div className="space-y-5">
+                  <div ref={teleprompterRef} className="max-h-[35vh] overflow-y-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <p className="text-center text-[1.5rem] font-bold leading-tight text-white/40 drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[2.7rem]">
                       {selectedShot.script_text}
                     </p>
                   </div>
-
-                  <div className="mt-4 border-t border-white/10 pt-4">
-                    <div className="pointer-events-auto flex items-center gap-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">ช้า</span>
-                      <input
-                        type="range"
-                        min={8}
-                        max={40}
-                        step={2}
-                        value={scrollSpeed}
-                        onChange={(event) => setScrollSpeed(Number(event.target.value))}
-                        className="w-full accent-[#bb95ff]"
-                      />
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">เร็ว</span>
-                    </div>
-                    <p className="mt-3 text-sm leading-6 text-slate-200">{selectedShot.visual_description}</p>
-                  </div>
                 </div>
               ) : (
-                <div className="rounded-[1.5rem] border border-white/10 bg-[#101322]/52 p-4 text-sm leading-7 text-slate-200 shadow-2xl shadow-black/40 backdrop-blur-xl">
-                  รอคอมส่งข้อมูลช็อตเข้ามาอยู่ ถ้าหน้านี้ยังว่าง ลองกดสร้าง QR ใหม่บนคอมอีกครั้ง
-                </div>
+                <div className="animate-pulse text-center text-sm text-white/40">Waiting for data...</div>
               )}
+            </div>
 
-              <div className="pointer-events-auto rounded-[2rem] border border-white/10 bg-[#101322]/68 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <Button
-                    type="button"
-                    onClick={() => setFacingMode((current) => (current === 'environment' ? 'user' : 'environment'))}
-                    className="h-12 rounded-full bg-white/10 px-4 text-white hover:bg-white/16"
-                  >
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                    สลับกล้อง
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={handleToggleTorch}
-                    disabled={!torchSupported}
-                    className="h-12 rounded-full bg-white/10 px-4 text-white hover:bg-white/16 disabled:opacity-40"
-                  >
-                    {torchOn ? <ZapOff className="mr-2 h-4 w-4" /> : <Zap className="mr-2 h-4 w-4" />}
-                    {torchOn ? 'ปิดแฟลช' : 'แฟลช'}
-                  </Button>
-                </div>
+            
 
-                {zoomCapability ? (
-                  <div className="mb-4 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
-                      <span>{zoomCapability.min.toFixed(1)}x</span>
-                      <span className="text-white">Zoom {zoomLevel.toFixed(1)}x</span>
-                      <span>{zoomCapability.max.toFixed(1)}x</span>
+            <div className="space-y-4">
+              {zoomCapability ? (
+                <div className="px-4">
+                  <div className="pointer-events-auto rounded-full border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-md">
+                    <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/50">
+                      <span>Zoom</span>
+                      <span>{zoomLevel.toFixed(1)}x</span>
                     </div>
                     <input
                       type="range"
@@ -567,44 +551,69 @@ export default function MobileProduction({ sessionId }: { sessionId: string }) {
                       max={zoomCapability.max}
                       step={zoomCapability.step}
                       value={zoomLevel}
-                      onChange={(event) => { void handleZoomRangeChange(Number(event.target.value)); }}
-                      className="w-full accent-white"
+                      onChange={(event) => void handleZoomRangeChange(Number(event.target.value))}
+                      className="h-1.5 w-full appearance-none rounded-full bg-white/20 accent-white"
                     />
                   </div>
-                ) : null}
+                </div>
+              ) : null}
 
-                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                  <div className="text-xs leading-5 text-slate-300">
-                    {countdown != null ? `เริ่มอัดใน ${countdown}...` : lastUploadMessage || (isRecording ? 'กำลังอัดอยู่' : 'พร้อมอัดคลิปช็อตนี้')}
+              <div className="grid grid-cols-3 items-center gap-4 px-2">
+                <button
+                  type="button"
+                  onClick={() => setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))}
+                  className="pointer-events-auto flex flex-col items-center gap-1 text-white/70 active:text-white"
+                >
+                  <div className="rounded-full border border-white/5 bg-black/20 p-3 backdrop-blur-md">
+                    <RotateCcw className="h-5 w-5" />
                   </div>
-                  <Button
+                  <span className="text-[9px] font-bold uppercase">สลับกล้อง</span>
+                </button>
+
+                <div className="flex justify-center">
+                  <button
                     type="button"
                     onClick={isRecording ? handleStopRecording : handleStartRecording}
                     disabled={!selectedShot || !!cameraError || isSending || countdown != null}
-                    className={`h-24 w-24 rounded-full px-0 text-white shadow-xl ${isRecording ? 'bg-[#c65478] hover:bg-[#d66386]' : 'bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] hover:opacity-95'}`}
+                    className={`pointer-events-auto relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/20 p-1 transition-all active:scale-90 disabled:opacity-60 ${isRecording ? 'border-red-500/55' : ''}`}
                   >
-                    {isSending ? <Loader2 className="h-8 w-8 animate-spin" /> : isRecording ? <CircleStop className="h-9 w-9" /> : <PlayCircle className="h-9 w-9" />}
-                  </Button>
-                  <div className="justify-self-end rounded-full border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold text-slate-200">
-                    1080x1920 · 25fps
-                  </div>
+                    <div className={`flex h-full w-full items-center justify-center rounded-full transition-all ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-white'}`}>
+                      {isSending ? (
+                        <Loader2 className="h-8 w-8 animate-spin text-black" />
+                      ) : isRecording ? (
+                        <Square className="h-8 w-8 fill-white text-white" />
+                      ) : (
+                        <div className="h-6 w-6 rounded-full bg-red-600" />
+                      )}
+                    </div>
+                  </button>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleTorch}
+                  disabled={!torchSupported}
+                  className={`pointer-events-auto flex flex-col items-center gap-1 transition-opacity ${torchOn ? 'text-yellow-400' : 'text-white/70'} disabled:opacity-25`}
+                >
+                  <div className="rounded-full border border-white/5 bg-black/20 p-3 backdrop-blur-md">
+                    {torchOn ? <Zap className="h-5 w-5 fill-current" /> : <ZapOff className="h-5 w-5" />}
+                  </div>
+                  <span className="text-[9px] font-bold uppercase">{torchOn ? 'ปิดแฟลช' : 'เปิดแฟลช'}</span>
+                </button>
               </div>
 
-              {sessionPayload ? (
-                <div className="pointer-events-none inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs text-slate-200 backdrop-blur-xl">
-                  <CheckCircle2 className="h-4 w-4 text-[#bb95ff]" />
-                  โปรเจกต์ {sessionPayload.title}
-                </div>
-              ) : null}
+              <div className="space-y-1 text-center">
+                <p className="text-xs text-white/75">{countdown != null ? `เริ่มอัดใน ${countdown}...` : lastUploadMessage || 'พร้อมถ่ายช็อตนี้แล้ว'}</p>
+                {sessionPayload ? <p className="text-[10px] uppercase tracking-[0.2em] text-white/35">Project: {sessionPayload.title}</p> : null}
+              </div>
             </div>
           </div>
 
           {countdown != null ? (
-            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/18">
-              <div className="rounded-full border border-white/20 bg-black/45 px-10 py-7 text-center shadow-2xl shadow-black/40 backdrop-blur-xl">
-                <div className="text-[5rem] font-black leading-none text-white sm:text-[6rem]">{countdown}</div>
-                <div className="mt-2 text-sm font-semibold uppercase tracking-[0.25em] text-[#e7dcff]">เตรียมอัด</div>
+            <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-black/25">
+              <div className="rounded-[2rem] border border-white/10 bg-black/30 px-10 py-8 text-center backdrop-blur-xl">
+                <div className="text-7xl font-black tracking-tight text-white">{countdown}</div>
+                <p className="mt-2 text-sm font-semibold uppercase tracking-[0.2em] text-white/70">เตรียมอัด</p>
               </div>
             </div>
           ) : null}

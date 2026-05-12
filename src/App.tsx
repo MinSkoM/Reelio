@@ -10,17 +10,25 @@ type DesktopPage = 'prepro' | 'production';
 export default function App() {
   const [desktopPage, setDesktopPage] = useState<DesktopPage>('prepro');
 
-  const mobileSessionId = useMemo(() => {
+  const mobileRoute = useMemo(() => {
     if (typeof window === 'undefined') return null;
     const params = new URLSearchParams(window.location.search);
     const mode = params.get('mode');
     const sessionId = params.get('session');
-    if (mode === 'mobile' && sessionId) return sessionId;
+    const mock = params.get('mock') === '1';
+
+    if (mode === 'mobile' && (sessionId || mock)) {
+      return {
+        sessionId: sessionId ?? 'mock-session',
+        mock,
+      };
+    }
+
     return null;
   }, []);
 
-  if (mobileSessionId) {
-    return <MobileProduction sessionId={mobileSessionId} />;
+  if (mobileRoute) {
+    return <MobileProduction sessionId={mobileRoute.sessionId} mock={mobileRoute.mock} />;
   }
 
   return (
