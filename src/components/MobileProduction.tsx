@@ -177,8 +177,8 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: preferredFacingMode },
-          width: { ideal: 1080 },
-          height: { ideal: 1920 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
           aspectRatio: { ideal: 16 / 9 },
           frameRate: { ideal: 25, max: 30 },
         },
