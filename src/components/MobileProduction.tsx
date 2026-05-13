@@ -160,7 +160,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   const [autoScroll, setAutoScroll] = useState(false);
   const [scrollSpeed, setScrollSpeed] = useState(20);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [countdownEnabled, setCountdownEnabled] = useState(true);
+  const [countdownEnabled, setCountdownEnabled] = useState(false);
   const [supportedRecordingMimeType, setSupportedRecordingMimeType] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -234,8 +234,12 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
           max: Number((capabilities.zoom as { max?: number }).max ?? 1),
           step: Number((capabilities.zoom as { step?: number }).step ?? 0.1),
         };
+        const defaultZoom = Math.min(nextCapability.max, Math.max(nextCapability.min, 1));
         setZoomCapability(nextCapability);
-        setZoomLevel(nextCapability.min);
+        setZoomLevel(defaultZoom);
+        try {
+          await videoTrack?.applyConstraints({ advanced: [{ zoom: defaultZoom } as MediaTrackConstraintSet] });
+        } catch {}
       } else {
         setZoomCapability(null);
         setZoomLevel(1);
@@ -624,7 +628,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
                     onClick={() => setCountdownEnabled((current) => !current)}
                     className={`rounded-full px-4 py-2 text-xs font-bold transition ${countdownEnabled ? 'bg-[#8d65e7] text-white' : 'bg-white/10 text-white/70'}`}
                   >
-                    {countdownEnabled ? 'เปิด countdown 3 วิ อยู่' : 'ปิด countdown 3 วิ อยู่'}
+                    {countdownEnabled ? 'countdown 3 sec' : 'countdown 3 sec'}
                   </button>
               </div>
               {zoomCapability ? (

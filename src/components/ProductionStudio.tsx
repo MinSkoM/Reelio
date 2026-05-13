@@ -74,6 +74,65 @@ function isMp4MimeType(mimeType?: string) {
   return Boolean(mimeType && mimeType.toLowerCase().includes('mp4'));
 }
 
+function formatSrtTimestamp(totalMs: number) {
+  const hours = Math.floor(totalMs / 3_600_000);
+  const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((totalMs % 60_000) / 1000);
+  const milliseconds = totalMs % 1000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
+function buildImportantTextSrt(script: GeneratedScript) {
+  let cursorMs = 0;
+  let cueIndex = 1;
+  const cues: string[] = [];
+  const useLegacyFallback = !script.shots.some((shot) => shot.on_screen_text?.trim());
+
+  script.shots
+    .slice()
+    .sort((a, b) => a.order_index - b.order_index)
+    .forEach((shot) => {
+      const text = (shot.on_screen_text?.trim() || (useLegacyFallback ? shot.script_text.trim() : '')).replace(/\s+/g, ' ');
+      const durationMs = Math.max(1000, Math.round((shot.duration_seconds || 3) * 1000));
+      const startMs = cursorMs;
+      const endMs = cursorMs + durationMs;
+      cursorMs = endMs;
+
+      if (!text) return;
+      cues.push([
+        String(cueIndex),
+        `${formatSrtTimestamp(startMs)} --> ${formatSrtTimestamp(endMs)}`,
+        text,
+      ].join('\n'));
+      cueIndex += 1;
+    });
+
+  return cues.join('\n\n');
+}
+
+async function convertBlobToMp4(blob: Blob, fileName: string, mimeType?: string) {
+  const params = new URLSearchParams({
+    fileName,
+    mimeType: mimeType || blob.type || 'video/webm',
+  });
+  const response = await fetch(`/api/convert-video?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType || blob.type || 'application/octet-stream' },
+    body: blob,
+  });
+
+  if (!response.ok) {
+    let message = 'แปลงวิดีโอเป็น MP4 ไม่สำเร็จ';
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = String(payload.error);
+    } catch {}
+    throw new Error(message);
+  }
+
+  return response.blob();
+}
+
 function downloadBlob(content: Blob, fileName: string) {
   const url = URL.createObjectURL(content);
   const link = document.createElement('a');
@@ -318,9 +377,8 @@ export default function ProductionStudio() {
   const allVideosAreMp4 = useMemo(() => receivedVideos.every((video) => isMp4MimeType(video.mimeType)), [receivedVideos]);
 
   const handleSelectShot = (orderIndex: number) => {
-    const next = selectedShotOrder === orderIndex ? null : orderIndex;
-    setSelectedShotOrder(next);
-    sendToMobile({ type: 'select-shot', orderIndex: next });
+    setSelectedShotOrder(orderIndex);
+    sendToMobile({ type: 'select-shot', orderIndex });
   };
 
   const handleResetSession = () => {
@@ -339,37 +397,50 @@ export default function ProductionStudio() {
     if (!selectedItem || receivedVideos.length === 0) return null;
 
     const zip = new JSZip();
-    const manifest = [
-      `โปรเจกต์: ${selectedItem.title}`,
-      `สร้างเมื่อ: ${new Date().toLocaleString('th-TH')}`,
-      '',
-    ];
+    const takeCounts: Record<string, number> = {};
 
-    receivedVideos.forEach((video, index) => {
-      const extension = isMp4MimeType(video.mimeType) ? 'mp4' : 'webm';
+    for (const video of receivedVideos) {
+      takeCounts[video.shotId] = (takeCounts[video.shotId] || 0) + 1;
       const shotNumber = String(video.shotId).padStart(2, '0');
-      const fileName = `shot-${shotNumber}.${extension}`;
-      zip.file(fileName, video.blob);
-      manifest.push(`${fileName} | shot ${video.shotId} | ${video.shotType ? getShotTypeLabel(video.shotType) : 'คลิป'} | format: ${video.mimeType || 'unknown'}`);
-    });
+      const takeNumber = String(takeCounts[video.shotId]).padStart(2, '0');
+      const fileName = `shot-${shotNumber}-take-${takeNumber}.mp4`;
+      const mp4Blob = isMp4MimeType(video.mimeType) ? video.blob : await convertBlobToMp4(video.blob, video.fileName, video.mimeType);
+      zip.file(fileName, mp4Blob);
+    }
 
-    zip.file('manifest.txt', manifest.join('\n'));
+    const srt = buildImportantTextSrt(selectedItem.script);
+    if (srt) {
+      zip.file('important-text.srt', `${srt}\n`);
+    }
+
     const blob = await zip.generateAsync({ type: 'blob' });
     return { blob, fileName: `${buildExportFileBase()}-production-clips.zip` };
   };
 
   const handleExportZip = async () => {
-    const result = await buildZipBlob();
-    if (!result) return;
-    downloadBlob(result.blob, result.fileName);
+    try {
+      setLastMessage('กำลังเตรียม ZIP เป็น MP4 ทุกคลิป');
+      const result = await buildZipBlob();
+      if (!result) return;
+      downloadBlob(result.blob, result.fileName);
+      setLastMessage('Export ZIP เรียบร้อยแล้ว');
+    } catch (error: any) {
+      setLastMessage(error?.message || 'Export ZIP ไม่สำเร็จ');
+    }
   };
 
   const handleShareZip = async () => {
-    const result = await buildZipBlob();
-    if (!result) return;
-    const shared = await shareBlob(result.blob, result.fileName, 'Production clips');
-    if (!shared) {
-      downloadBlob(result.blob, result.fileName);
+    try {
+      setLastMessage('กำลังเตรียม ZIP เป็น MP4 ทุกคลิป');
+      const result = await buildZipBlob();
+      if (!result) return;
+      const shared = await shareBlob(result.blob, result.fileName, 'Production clips');
+      if (!shared) {
+        downloadBlob(result.blob, result.fileName);
+      }
+      setLastMessage('Share ZIP เรียบร้อยแล้ว');
+    } catch (error: any) {
+      setLastMessage(error?.message || 'Share ZIP ไม่สำเร็จ');
     }
   };
 
@@ -508,7 +579,7 @@ export default function ProductionStudio() {
                       key={shot.order_index}
                       type="button"
                       onClick={() => handleSelectShot(shot.order_index)}
-                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isCompleted ? 'border-white/10 bg-[#565b72] opacity-75' : isActive ? 'border-[#c29aff]/40 bg-[#8d65e7]/16' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isActive ? 'border-[#c29aff]/40 bg-[#8d65e7]/16' : isCompleted ? 'border-white/10 bg-[#565b72] opacity-75 hover:bg-[#62677f]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="space-y-3">
@@ -520,7 +591,7 @@ export default function ProductionStudio() {
                               ช็อต {shot.order_index}
                             </span>
                             <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${isCompleted ? 'border-white/10 bg-black/20 text-white' : 'border-white/10 bg-white/5 text-slate-200'}`}>
-                              {isCompleted ? 'ถ่ายแล้ว' : `รับคลิปแล้ว ${count} ไฟล์`}
+                              {isCompleted ? `ถ่ายแล้ว ${count} ไฟล์` : `รับคลิปแล้ว ${count} ไฟล์`}
                             </span>
                             {count > 0 ? (
                               <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${receivedVideos.find((video) => video.shotId === String(shot.order_index) && isMp4MimeType(video.mimeType)) ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-100' : 'border-amber-300/20 bg-amber-400/10 text-amber-100'}`}>
@@ -529,6 +600,11 @@ export default function ProductionStudio() {
                             ) : null}
                           </div>
                           <p className="text-base leading-7 text-white">{shot.script_text}</p>
+                          {shot.on_screen_text?.trim() ? (
+                            <p className="mt-2 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 px-3 py-2 text-sm font-semibold leading-6 text-emerald-100">
+                              Text on video: {shot.on_screen_text.trim()}
+                            </p>
+                          ) : null}
                           <p className="text-sm leading-6 text-slate-300">{shot.visual_description}</p>
                         </div>
                         <div className="inline-flex items-center gap-2 rounded-full bg-[#2f334b] px-4 py-2 text-sm font-semibold text-white">

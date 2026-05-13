@@ -391,6 +391,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
         .flatMap((shot) => [
           `Shot ${shot.order_index}`,
           `Voice: ${shot.script_text}`,
+          `Text on video: ${shot.on_screen_text?.trim() || '-'}`,
           `Description: ${shot.visual_description}`,
           '',
         ]),
@@ -403,11 +404,11 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     if (!script) return;
 
     const rows = [
-      ['Shot', 'Description', 'Voice'],
+      ['Shot', 'Description', 'Voice', 'Text on video'],
       ...script.shots
         .slice()
         .sort((a, b) => a.order_index - b.order_index)
-        .map((shot) => [String(shot.order_index), shot.visual_description, shot.script_text]),
+        .map((shot) => [String(shot.order_index), shot.visual_description, shot.script_text, shot.on_screen_text?.trim() || '']),
     ];
 
     const csv = rows.map((row) => row.map((cell) => escapeCsvValue(cell)).join(',')).join('\n');
@@ -614,7 +615,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                   className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  ดาวน์โหลด TXT
+                  ไฟล์ข้อความ
                 </Button>
                 <Button
                   type="button"
@@ -623,7 +624,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                   className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  ดาวน์โหลด CSV
+                  ไฟล์ตาราง
                 </Button>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full bg-[#8d65e7]/16 px-4 py-2 text-sm font-semibold text-[#efe7ff]">
@@ -689,6 +690,12 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
                           <p className="text-base leading-7 text-slate-100">{shot.script_text}</p>
                         </div>
+                        {shot.on_screen_text?.trim() ? (
+                          <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#445565]' : 'bg-emerald-400/10'}`}>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Text on video</p>
+                            <p className="text-base font-semibold leading-7 text-emerald-50">{shot.on_screen_text.trim()}</p>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                     <Button

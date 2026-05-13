@@ -4,6 +4,7 @@ export interface GeneratedScript {
   shots: {
     shot_type: 'A-Roll' | 'B-Roll';
     script_text: string;
+    on_screen_text?: string;
     visual_description: string;
     order_index: number;
     duration_seconds: number;
