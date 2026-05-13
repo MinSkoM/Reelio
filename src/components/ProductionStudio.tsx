@@ -390,15 +390,6 @@ export default function ProductionStudio() {
               <p className="text-sm font-bold tracking-wide text-[#e7dcff]">Control Center</p>
               <CardTitle className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">เชื่อมมือถือเพื่อถ่ายช็อตแล้วส่งกลับเข้าคอม</CardTitle>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleResetSession}
-              className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
-            >
-              <RefreshCw className="mr-2 h-4 w-4" />
-              สร้าง QR ใหม่
-            </Button>
           </div>
           <p className="max-w-3xl text-base leading-7 text-slate-200">
             เลือกงานจากคลัง แล้วให้คอมสร้าง QR สำหรับเปิดหน้าถ่ายบนมือถือ เมื่อถ่ายเสร็จ คลิปจะถูกส่งกลับมาที่คอมและเรียงตามเลขช็อตให้ทันที
@@ -442,10 +433,12 @@ export default function ProductionStudio() {
               <QrCode className="h-5 w-5 text-[#dcc8ff]" />
               <h3 className="text-xl font-bold">2. สแกน QR จากมือถือ</h3>
             </div>
+            
             <div className="grid gap-4 md:grid-cols-[220px_1fr] md:items-center">
               <div className="mx-auto w-fit rounded-[1.5rem] bg-white p-4">
                 {sessionUrl ? <QRCode value={sessionUrl} size={188} className="h-auto w-full" /> : null}
               </div>
+            
               <div className="space-y-3 text-slate-200">
                 <div className="inline-flex items-center gap-2 rounded-full bg-[#2f334b] px-4 py-2 text-sm font-semibold text-white">
                   <Wifi className="h-4 w-4 text-[#b995ff]" />
@@ -465,6 +458,15 @@ export default function ProductionStudio() {
                   <p className="break-all rounded-2xl bg-[#2f334b] px-4 py-3 text-xs leading-6 text-slate-300">{sessionUrl || 'ยังไม่มีลิงก์ session'}</p>
                 </div>
                 {lastMessage ? <p className="text-sm text-[#efe7ff]">สถานะล่าสุด: {lastMessage}</p> : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleResetSession}
+                  className="items-center rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  สร้าง QR ใหม่
+                </Button>
               </div>
             </div>
           </div>

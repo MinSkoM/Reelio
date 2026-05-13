@@ -67,7 +67,7 @@ export default function App() {
               className={`min-h-11 flex-1 rounded-2xl border px-4 text-sm sm:flex-none ${desktopPage === 'library' ? 'border-[#b48cff]/30 bg-[#8d65e7]/16 text-white' : 'border-white/10 bg-white/6 text-slate-300 hover:bg-white/10'}`}
             >
               <Library className="mr-2 h-4 w-4" />
-              คลังงาน
+              My Project
             </Button>
           </div>
         </div>
@@ -80,7 +80,7 @@ export default function App() {
               Reelio : your all-in-one content creation companion
             </p>
             <h1 className="text-4xl font-black tracking-tight text-white sm:text-6xl">
-              {desktopPage === 'prepro' ? 'Pre-Production' : desktopPage === 'library' ? 'คลังงาน' : 'Control Center'}
+              {desktopPage === 'prepro' ? 'Pre-Production' : desktopPage === 'library' ? 'My Project' : 'Control Center'}
             </h1>
             <p className="max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
               {desktopPage === 'prepro'

@@ -67,7 +67,7 @@ function quotaToDisplay(quota: QuotaSnapshot): QuotaStatus {
     title: 'พร้อมใช้งาน',
     statusType: 'ok',
     remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-    resetText: quota.note || 'งานที่สร้างจะถูกเก็บไว้ในคลังงานของเครื่องนี้',
+    resetText: quota.note || 'งานที่สร้างจะถูกเก็บไว้ในเครื่องนี้',
   };
 }
 
@@ -512,14 +512,14 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
 
         <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
           <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-2 pt-2 sm:px-8">
-            <p className="text-sm font-bold tracking-wide text-[#e7dcff]">คลังงาน</p>
+            <p className="text-sm font-bold tracking-wide text-[#e7dcff]">My Project</p>
             <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">สคริปต์และช็อตลิสต์ที่สร้างไว้</CardTitle>
             <p className="max-w-3xl text-base leading-7 text-slate-200">ทุกงานที่สร้างจากหน้านี้จะถูกเก็บไว้ในเครื่องของคุณ และสามารถเปิดกลับมาดูช็อตลิสต์ต่อได้จากหน้านี้</p>
           </CardHeader>
           <CardContent className="-mt-6 -mb-6 space-y-4 p-5 sm:p-8">
             {libraryItems.length === 0 ? (
               <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-6 text-slate-200">
-                ยังไม่มีงานในคลัง ลองสร้างสคริปต์หรือช็อตลิสต์ก่อน แล้วงานจะมาอยู่ตรงนี้อัตโนมัติ
+                ยังไม่มีงาน ลองสร้างสคริปต์หรือช็อตลิสต์ก่อน แล้วงานจะมาอยู่ตรงนี้อัตโนมัติ
               </div>
             ) : (
               libraryItems.map((item) => (

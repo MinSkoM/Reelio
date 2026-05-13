@@ -38,11 +38,13 @@ type ZoomCapability = {
 };
 
 const RECORDER_MIME_TYPES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
   'video/mp4;codecs=h264,aac',
+  'video/mp4;codecs=avc1',
+  'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
   'video/webm',
-  'video/mp4',
 ];
 
 const MOCK_SESSION_PAYLOAD: SessionPayload = {
@@ -116,6 +118,31 @@ function isMp4MimeType(mimeType: string) {
   return mimeType.toLowerCase().includes('mp4');
 }
 
+async function convertBlobToMp4(blob: Blob, fileName: string, mimeType: string) {
+  const params = new URLSearchParams({ fileName, mimeType });
+  const response = await fetch(`/api/convert-video?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
+    body: blob,
+  });
+
+  if (!response.ok) {
+    let message = 'แปลงวิดีโอเป็น MP4 ไม่สำเร็จ';
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = String(payload.error);
+    } catch {}
+    throw new Error(message);
+  }
+
+  const outputFileName = response.headers.get('X-Output-File-Name') || fileName.replace(/\.[^.]+$/u, '.mp4');
+  return {
+    blob: await response.blob(),
+    fileName: outputFileName,
+    mimeType: 'video/mp4',
+  };
+}
+
 export default function MobileProduction({ sessionId, mock = false }: { sessionId: string; mock?: boolean }) {
   const [connectionStatus, setConnectionStatus] = useState(mock ? 'Mock mode พร้อมดู UI โดยไม่เชื่อมคอม' : 'กำลังเชื่อมกับคอม');
   const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(mock ? MOCK_SESSION_PAYLOAD : null);
@@ -134,6 +161,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   const [scrollSpeed, setScrollSpeed] = useState(20);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [countdownEnabled, setCountdownEnabled] = useState(true);
+  const [supportedRecordingMimeType, setSupportedRecordingMimeType] = useState('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -166,6 +194,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
       setTorchOn(false);
       setZoomCapability(null);
       setZoomLevel(1);
+      setSupportedRecordingMimeType('video/mp4');
       return;
     }
 
@@ -214,6 +243,12 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
       setTorchSupported(Boolean(capabilities.torch));
       setTorchOn(false);
+
+      const nextRecordingMimeType = getSupportedRecorderMimeType();
+      setSupportedRecordingMimeType(nextRecordingMimeType);
+      if (!nextRecordingMimeType) {
+        setLastUploadMessage('เครื่องนี้อนุญาตกล้องได้ แต่ browser นี้ไม่รองรับการอัดวิดีโอผ่านเว็บ');
+      }
     } catch (error: any) {
       if (error?.name === 'NotAllowedError') {
         setCameraError('ยังไม่ได้อนุญาตกล้องหรือไมค์ ให้กดอนุญาตสิทธิ์แล้วเปิดใหม่อีกครั้ง');
@@ -359,8 +394,12 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
     try {
       chunksRef.current = [];
-      const supportedMimeType = getSupportedRecorderMimeType();
-      const recorder = supportedMimeType ? new MediaRecorder(stream, { mimeType: supportedMimeType }) : new MediaRecorder(stream);
+      const supportedMimeType = supportedRecordingMimeType || getSupportedRecorderMimeType();
+      if (!supportedMimeType) {
+        setLastUploadMessage('เริ่มอัดไม่ได้ เพราะ browser นี้ไม่รองรับ MediaRecorder');
+        return;
+      }
+      const recorder = new MediaRecorder(stream, { mimeType: supportedMimeType });
       recorderRef.current = recorder;
       const startedAt = Date.now();
 
@@ -373,32 +412,57 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
       recorder.onstop = async () => {
         if (!sessionPayload || !selectedShot) return;
         setIsSending(true);
-        const mimeType = recorder.mimeType || supportedMimeType || 'video/webm';
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const buffer = await blob.arrayBuffer();
-        const durationMs = Date.now() - startedAt;
+        try {
+          const recordedMimeType = recorder.mimeType || supportedMimeType || 'video/webm';
+          const recordedFileName = buildClipFileName(selectedShot.order_index, recordedMimeType);
+          const recordedBlob = new Blob(chunksRef.current, { type: recordedMimeType });
+          let uploadBlob = recordedBlob;
+          let uploadMimeType = recordedMimeType;
+          let uploadFileName = recordedFileName;
 
-        sendMessage({
-          type: 'video-upload',
-          itemId: sessionPayload.itemId,
-          shotOrder: selectedShot.order_index,
-          shotType: selectedShot.shot_type,
-          durationMs,
-          mimeType,
-          fileName: buildClipFileName(selectedShot.order_index, mimeType),
-          createdAt: Date.now(),
-          buffer,
-        });
+          if (!isMp4MimeType(recordedMimeType)) {
+            setLastUploadMessage(`กำลังแปลงช็อต ${selectedShot.order_index} เป็น MP4`);
+            try {
+              const converted = await convertBlobToMp4(recordedBlob, recordedFileName, recordedMimeType);
+              uploadBlob = converted.blob;
+              uploadMimeType = converted.mimeType;
+              uploadFileName = converted.fileName;
+            } catch (error: any) {
+              setLastUploadMessage(`แปลงเป็น MP4 ไม่สำเร็จ จึงส่งไฟล์เดิม (${recordedMimeType})`);
+              sendMessage({ type: 'mobile-error', message: error?.message || 'แปลงวิดีโอเป็น MP4 ไม่สำเร็จ' });
+            }
+          }
 
-        setLastUploadMessage(isMp4MimeType(mimeType) ? `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว (MP4)` : `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว แต่เครื่องนี้อัดได้เป็น ${mimeType}`);
-        setIsSending(false);
+          const buffer = await uploadBlob.arrayBuffer();
+          const durationMs = Date.now() - startedAt;
 
-        const sortedShots = sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index);
-        const currentIndex = sortedShots.findIndex((shot) => shot.order_index === selectedShot.order_index);
-        const nextShot = sortedShots[currentIndex + 1];
-        if (nextShot) {
-          setSelectedShotOrder(nextShot.order_index);
-          sendMessage({ type: 'active-shot', orderIndex: nextShot.order_index });
+          sendMessage({
+            type: 'video-upload',
+            itemId: sessionPayload.itemId,
+            shotOrder: selectedShot.order_index,
+            shotType: selectedShot.shot_type,
+            durationMs,
+            mimeType: uploadMimeType,
+            fileName: uploadFileName,
+            createdAt: Date.now(),
+            buffer,
+          });
+
+          setLastUploadMessage(isMp4MimeType(uploadMimeType) ? `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว (MP4)` : `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว แต่เครื่องนี้อัดได้เป็น ${uploadMimeType}`);
+
+          const sortedShots = sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index);
+          const currentIndex = sortedShots.findIndex((shot) => shot.order_index === selectedShot.order_index);
+          const nextShot = sortedShots[currentIndex + 1];
+          if (nextShot) {
+            setSelectedShotOrder(nextShot.order_index);
+            sendMessage({ type: 'active-shot', orderIndex: nextShot.order_index });
+          }
+        } catch (error: any) {
+          const message = error?.message || 'ส่งคลิปกลับเข้าคอมไม่สำเร็จ';
+          setLastUploadMessage(message);
+          sendMessage({ type: 'mobile-error', message });
+        } finally {
+          setIsSending(false);
         }
       };
 
@@ -413,6 +477,10 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
   const handleStartRecording = () => {
     if ((!streamRef.current && !mock) || !selectedShot || !sessionPayload || isSending || isRecording) return;
+    if (!mock && !supportedRecordingMimeType) {
+      setLastUploadMessage('อัดไม่ได้: browser นี้ไม่รองรับ MediaRecorder');
+      return;
+    }
     if (countdownEnabled) {
       setLastUploadMessage('เตรียมเริ่มอัดใน 3 วินาที');
       setCountdown(3);
@@ -556,7 +624,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
                     onClick={() => setCountdownEnabled((current) => !current)}
                     className={`rounded-full px-4 py-2 text-xs font-bold transition ${countdownEnabled ? 'bg-[#8d65e7] text-white' : 'bg-white/10 text-white/70'}`}
                   >
-                    {countdownEnabled ? 'เปิด countdown 3 วิ' : 'ปิด countdown 3 วิ'}
+                    {countdownEnabled ? 'เปิด countdown 3 วิ อยู่' : 'ปิด countdown 3 วิ อยู่'}
                   </button>
               </div>
               {zoomCapability ? (
