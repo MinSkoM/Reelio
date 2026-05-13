@@ -6,7 +6,7 @@ import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy } from 'lucide-react';
+import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
@@ -165,6 +165,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
   const [activeLibraryItemId, setActiveLibraryItemId] = useState<string | null>(null);
   const [completedShots, setCompletedShots] = useState<Record<number, boolean>>({});
   const [progressVersion, setProgressVersion] = useState(0);
+  const [editingScript, setEditingScript] = useState(false);
   const [quotaStatus, setQuotaStatus] = useState<QuotaStatus>({
     title: 'กำลังเช็กโควต้า',
     statusType: 'ok',
@@ -274,6 +275,63 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     setActiveLibraryItemId(item.id);
   };
 
+  const applyScriptUpdate = (updater: (current: GeneratedScript) => GeneratedScript) => {
+    setScript((current) => {
+      if (!current) return current;
+      const nextScript = updater(current);
+
+      if (activeLibraryItemId) {
+        setLibraryItems((currentItems) => {
+          const nextItems = currentItems.map((item) =>
+            item.id === activeLibraryItemId
+              ? { ...item, title: nextScript.title || item.title, script: nextScript }
+              : item,
+          );
+          saveLibrary(nextItems);
+          return nextItems;
+        });
+      }
+
+      return nextScript;
+    });
+  };
+
+  const updateShot = (orderIndex: number, patch: Partial<GeneratedScript['shots'][number]>) => {
+    applyScriptUpdate((current) => ({
+      ...current,
+      shots: current.shots.map((shot) => (shot.order_index === orderIndex ? { ...shot, ...patch } : shot)),
+    }));
+  };
+
+  const addShot = () => {
+    applyScriptUpdate((current) => {
+      const nextOrderIndex = Math.max(0, ...current.shots.map((shot) => shot.order_index)) + 1;
+      return {
+        ...current,
+        shots: [
+          ...current.shots,
+          {
+            shot_type: 'A-Roll',
+            script_text: '',
+            on_screen_text: '',
+            visual_description: '',
+            order_index: nextOrderIndex,
+            duration_seconds: 3,
+          },
+        ],
+      };
+    });
+  };
+
+  const deleteShot = (orderIndex: number) => {
+    applyScriptUpdate((current) => ({
+      ...current,
+      shots: current.shots
+        .filter((shot) => shot.order_index !== orderIndex)
+        .map((shot, index) => ({ ...shot, order_index: index + 1 })),
+    }));
+  };
+
   const handleGenerate = async () => {
     setLoading(true);
     try {
@@ -319,6 +377,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     setScript(item.script);
     setActiveLibraryItemId(item.id);
     setCompletedShots(getShotProgress(item.id));
+    setEditingScript(false);
     setPageView('shot-list');
   };
 
@@ -611,6 +670,15 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                 <Button
                   type="button"
                   variant="outline"
+                  onClick={() => setEditingScript((current) => !current)}
+                  className="rounded-2xl border-emerald-300/20 bg-emerald-400/12 px-4 text-emerald-50 hover:bg-emerald-400/18"
+                >
+                  <Pencil className="mr-2 h-4 w-4" />
+                  {editingScript ? 'เสร็จสิ้นการแก้ไข' : 'แก้ไข script'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={handleDownloadTxt}
                   className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                 >
@@ -634,10 +702,28 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
             </div>
             <div className="space-y-3">
               <p className="text-sm font-bold tracking-wide text-[#e7dcff]">หน้าช็อตลิสต์</p>
-              <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">{script.title}</CardTitle>
+              {editingScript ? (
+                <Input
+                  value={script.title}
+                  onChange={(event) => applyScriptUpdate((current) => ({ ...current, title: event.target.value }))}
+                  className="h-14 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-2xl font-black text-white placeholder:text-slate-500 sm:text-3xl"
+                  placeholder="ชื่อโปรเจกต์"
+                />
+              ) : (
+                <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">{script.title}</CardTitle>
+              )}
               <div className="rounded-2xl border border-white/10 bg-[#2f334b]/65 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <p className="max-w-3xl whitespace-pre-line text-sm leading-7 text-slate-100">{buildCaptionText() || 'งานนี้ยังไม่มี AI caption เพราะสร้างไว้ก่อนระบบ caption รุ่นใหม่'}</p>
+                  {editingScript ? (
+                    <Textarea
+                      value={script.caption}
+                      onChange={(event) => applyScriptUpdate((current) => ({ ...current, caption: event.target.value }))}
+                      className="min-h-28 flex-1 rounded-2xl border-white/12 bg-[#454963] px-4 py-3 text-sm leading-7 text-white placeholder:text-slate-500"
+                      placeholder="caption สำหรับโพสต์"
+                    />
+                  ) : (
+                    <p className="max-w-3xl whitespace-pre-line text-sm leading-7 text-slate-100">{buildCaptionText() || 'งานนี้ยังไม่มี AI caption เพราะสร้างไว้ก่อนระบบ caption รุ่นใหม่'}</p>
+                  )}
                   <Button
                     type="button"
                     variant="outline"
@@ -653,6 +739,19 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
           </CardHeader>
 
           <CardContent className="space-y-4 p-6 sm:p-8">
+            {editingScript ? (
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addShot}
+                  className="rounded-2xl border-emerald-300/20 bg-emerald-400/12 px-4 text-emerald-50 hover:bg-emerald-400/18"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  เพิ่มช็อต
+                </Button>
+              </div>
+            ) : null}
             {sortedShots.map((shot) => {
               const isCompleted = Boolean(completedShots[shot.order_index]);
               return (
@@ -681,35 +780,109 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                         </span>
                       </div>
 
-                      <div className="space-y-3">
-                        <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#474c63]' : 'bg-[#2f334b]'}`}>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">รายละเอียดช็อต</p>
-                          <p className="text-base leading-7 text-white">{shot.visual_description}</p>
-                        </div>
-                        <div className={`border-1 rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#4f536b]' : 'bg-[#8d65e7]/14'}`}>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
-                          <p className="text-base leading-7 text-slate-100">{shot.script_text}</p>
-                        </div>
-                        {shot.on_screen_text?.trim() ? (
-                          <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#445565]' : 'bg-emerald-400/10'}`}>
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Text on video</p>
-                            <p className="text-base font-semibold leading-7 text-emerald-50">{shot.on_screen_text.trim()}</p>
+                      {editingScript ? (
+                        <div className="space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">ประเภทช็อต</p>
+                              <div className="flex flex-wrap gap-2">
+                                {(['A-Roll', 'B-Roll'] as const).map((shotType) => (
+                                  <Button
+                                    key={shotType}
+                                    type="button"
+                                    variant={shot.shot_type === shotType ? 'default' : 'outline'}
+                                    onClick={() => updateShot(shot.order_index, { shot_type: shotType })}
+                                    className={shot.shot_type === shotType ? 'rounded-2xl bg-[#8d65e7] text-white' : 'rounded-2xl border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'}
+                                  >
+                                    {getShotTypeLabel(shotType)}
+                                  </Button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">เวลา (วินาที)</p>
+                              <Input
+                                type="number"
+                                min={1}
+                                value={shot.duration_seconds}
+                                onChange={(event) => updateShot(shot.order_index, { duration_seconds: Math.max(1, Number(event.target.value) || 1) })}
+                                className="h-11 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white"
+                              />
+                            </div>
                           </div>
-                        ) : null}
-                      </div>
+                          <div className="rounded-xl bg-[#2f334b] p-4">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">รายละเอียดช็อต</p>
+                            <Textarea
+                              value={shot.visual_description}
+                              onChange={(event) => updateShot(shot.order_index, { visual_description: event.target.value })}
+                              className="min-h-24 rounded-xl border-white/12 bg-[#454963] px-4 py-3 text-white"
+                              placeholder="อธิบายว่าช็อตนี้ต้องถ่ายอะไร"
+                            />
+                          </div>
+                          <div className="rounded-xl bg-[#8d65e7]/14 p-4">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
+                            <Textarea
+                              value={shot.script_text}
+                              onChange={(event) => updateShot(shot.order_index, { script_text: event.target.value })}
+                              className="min-h-24 rounded-xl border-white/12 bg-[#454963] px-4 py-3 text-white"
+                              placeholder="สิ่งที่พูดหรือใจความของช็อตนี้"
+                            />
+                          </div>
+                          <div className="rounded-xl bg-emerald-400/10 p-4">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Text on video</p>
+                            <Textarea
+                              value={shot.on_screen_text || ''}
+                              onChange={(event) => updateShot(shot.order_index, { on_screen_text: event.target.value })}
+                              className="min-h-20 rounded-xl border-emerald-300/20 bg-[#454963] px-4 py-3 text-emerald-50"
+                              placeholder="ข้อความสั้นที่จะขึ้นบนวิดีโอ / ใช้ทำ .srt"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#474c63]' : 'bg-[#2f334b]'}`}>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">รายละเอียดช็อต</p>
+                            <p className="text-base leading-7 text-white">{shot.visual_description}</p>
+                          </div>
+                          <div className={`border-1 rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#4f536b]' : 'bg-[#8d65e7]/14'}`}>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
+                            <p className="text-base leading-7 text-slate-100">{shot.script_text}</p>
+                          </div>
+                          {shot.on_screen_text?.trim() ? (
+                            <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#445565]' : 'bg-emerald-400/10'}`}>
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Text on video</p>
+                              <p className="text-base font-semibold leading-7 text-emerald-50">{shot.on_screen_text.trim()}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => toggleShotCompleted(shot.order_index)}
-                      className={`inline-flex min-h-14 w-full min-w-[180px] cursor-pointer items-center justify-center rounded-2xl border px-6 py-4 text-base font-bold transition-all duration-300 active:scale-[0.98] sm:w-auto ${
-                        isCompleted
-                          ? 'border-white/10 bg-white text-[#2f334b] shadow-md'
-                          : 'border-[#a98eff]/20 bg-[#8d65e7]/18 text-[#efe7ff] hover:bg-[#8d65e7]/28'
-                      }`}
-                    >
-                      {isCompleted ? 'ยกเลิกว่าถ่ายเสร็จแล้ว' : 'ถ่ายเสร็จแล้ว'}
-                    </Button>
+                    <div className="flex w-full flex-col gap-2 sm:w-auto">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => toggleShotCompleted(shot.order_index)}
+                        className={`inline-flex min-h-14 w-full min-w-[180px] cursor-pointer items-center justify-center rounded-2xl border px-6 py-4 text-base font-bold transition-all duration-300 active:scale-[0.98] sm:w-auto ${
+                          isCompleted
+                            ? 'border-white/10 bg-white text-[#2f334b] shadow-md'
+                            : 'border-[#a98eff]/20 bg-[#8d65e7]/18 text-[#efe7ff] hover:bg-[#8d65e7]/28'
+                        }`}
+                      >
+                        {isCompleted ? 'ยกเลิกว่าถ่ายเสร็จแล้ว' : 'ถ่ายเสร็จแล้ว'}
+                      </Button>
+                      {editingScript ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => deleteShot(shot.order_index)}
+                          disabled={sortedShots.length <= 1}
+                          className="inline-flex min-h-12 w-full min-w-[180px] cursor-pointer items-center justify-center rounded-2xl border border-red-300/20 bg-red-500/20 px-6 py-3 text-sm font-bold text-red-50 transition-all duration-300 hover:bg-red-500/28 disabled:opacity-40 sm:w-auto"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          ลบช็อต
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               );

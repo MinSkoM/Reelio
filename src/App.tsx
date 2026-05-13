@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Clapperboard, Library, MonitorSmartphone, Sparkles } from 'lucide-react';
+import { Clapperboard, Library, MonitorSmartphone, Smartphone, Sparkles } from 'lucide-react';
 import PreProduction from './components/PreProduction';
 import ProductionStudio from './components/ProductionStudio';
 import MobileProduction from './components/MobileProduction';
 import { Button } from './components/ui/button';
 
-type DesktopPage = 'prepro' | 'library' | 'production';
+type DesktopPage = 'prepro' | 'library' | 'production' | 'one-device';
 
 export default function App() {
   const [desktopPage, setDesktopPage] = useState<DesktopPage>('prepro');
@@ -17,10 +17,19 @@ export default function App() {
     const sessionId = params.get('session');
     const mock = params.get('mock') === '1';
 
+    if (mode === 'one-device') {
+      return {
+        sessionId: 'one-device',
+        mock: false,
+        standalone: true,
+      };
+    }
+
     if (mode === 'mobile' && (sessionId || mock)) {
       return {
         sessionId: sessionId ?? 'mock-session',
         mock,
+        standalone: false,
       };
     }
 
@@ -28,7 +37,11 @@ export default function App() {
   }, []);
 
   if (mobileRoute) {
-    return <MobileProduction sessionId={mobileRoute.sessionId} mock={mobileRoute.mock} />;
+    return <MobileProduction sessionId={mobileRoute.sessionId} mock={mobileRoute.mock} standalone={mobileRoute.standalone} />;
+  }
+
+  if (desktopPage === 'one-device') {
+    return <MobileProduction sessionId="one-device" standalone onExit={() => setDesktopPage('prepro')} />;
   }
 
   return (
@@ -59,6 +72,15 @@ export default function App() {
             >
               <MonitorSmartphone className="mr-2 h-4 w-4" />
               Control Center
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDesktopPage('one-device')}
+              className={`min-h-11 flex-1 rounded-2xl border px-4 text-sm sm:flex-none ${desktopPage === 'one-device' ? 'border-[#b48cff]/30 bg-[#8d65e7]/16 text-white' : 'border-white/10 bg-white/6 text-slate-300 hover:bg-white/10'}`}
+            >
+              <Smartphone className="mr-2 h-4 w-4" />
+              Camera
             </Button>
             <Button
               type="button"

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Peer, { type DataConnection } from 'peerjs';
 import type { GeneratedScript } from '../services/geminiService';
-import { RotateCcw, CameraOff, Loader2, ChevronDown, Square, Zap, ZapOff } from 'lucide-react';
+import { RotateCcw, CameraOff, Loader2, ChevronDown, Square, Zap, ZapOff, ArrowLeft, FolderOpen } from 'lucide-react';
+import { saveVideo } from '../lib/db';
+import { markShotCompleted } from '../lib/shotProgress';
 
 type HostToMobileMessage =
   | { type: 'session-script'; itemId: string; title: string; prompt: string; script: GeneratedScript; selectedShotOrder: number | null }
@@ -31,11 +33,22 @@ type SessionPayload = {
   selectedShotOrder: number | null;
 };
 
+type LibraryItem = {
+  id: string;
+  title: string;
+  prompt: string;
+  mode: 'brief' | 'script';
+  createdAt: string;
+  script: GeneratedScript;
+};
+
 type ZoomCapability = {
   min: number;
   max: number;
   step: number;
 };
+
+const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
 const RECORDER_MIME_TYPES = [
   'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
@@ -118,6 +131,17 @@ function isMp4MimeType(mimeType: string) {
   return mimeType.toLowerCase().includes('mp4');
 }
 
+function loadLibrary(): LibraryItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LIBRARY_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 async function convertBlobToMp4(blob: Blob, fileName: string, mimeType: string) {
   const params = new URLSearchParams({ fileName, mimeType });
   const response = await fetch(`/api/convert-video?${params.toString()}`, {
@@ -143,15 +167,17 @@ async function convertBlobToMp4(blob: Blob, fileName: string, mimeType: string) 
   };
 }
 
-export default function MobileProduction({ sessionId, mock = false }: { sessionId: string; mock?: boolean }) {
-  const [connectionStatus, setConnectionStatus] = useState(mock ? 'Mock mode พร้อมดู UI โดยไม่เชื่อมคอม' : 'กำลังเชื่อมกับคอม');
+export default function MobileProduction({ sessionId, mock = false, standalone = false, onExit }: { sessionId: string; mock?: boolean; standalone?: boolean; onExit?: () => void }) {
+  const [connectionStatus, setConnectionStatus] = useState(standalone ? 'One Device mode' : mock ? 'Mock mode พร้อมดู UI โดยไม่เชื่อมคอม' : 'กำลังเชื่อมกับคอม');
   const [sessionPayload, setSessionPayload] = useState<SessionPayload | null>(mock ? MOCK_SESSION_PAYLOAD : null);
   const [selectedShotOrder, setSelectedShotOrder] = useState<number | null>(mock ? 1 : null);
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [cameraError, setCameraError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [lastUploadMessage, setLastUploadMessage] = useState(mock ? 'เปิดดูหน้า MobileProduction แบบ mock ได้เลย' : '');
   const [showShotPicker, setShowShotPicker] = useState(false);
+  const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [zoomCapability, setZoomCapability] = useState<ZoomCapability | null>(null);
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -168,6 +194,37 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   const chunksRef = useRef<Blob[]>([]);
   const connectionRef = useRef<DataConnection | null>(null);
   const teleprompterRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!standalone) return;
+    const items = loadLibrary();
+    setLibraryItems(items);
+    if (!sessionPayload && items[0]) {
+      const firstItem = items[0];
+      setSessionPayload({
+        itemId: firstItem.id,
+        title: firstItem.title,
+        prompt: firstItem.prompt,
+        script: firstItem.script,
+        selectedShotOrder: firstItem.script.shots[0]?.order_index ?? null,
+      });
+      setSelectedShotOrder(firstItem.script.shots[0]?.order_index ?? null);
+    }
+  }, [standalone, sessionPayload]);
+
+  const handleSelectLocalProject = (item: LibraryItem) => {
+    setSessionPayload({
+      itemId: item.id,
+      title: item.title,
+      prompt: item.prompt,
+      script: item.script,
+      selectedShotOrder: item.script.shots[0]?.order_index ?? null,
+    });
+    setSelectedShotOrder(item.script.shots[0]?.order_index ?? null);
+    setShowShotPicker(false);
+    setShowProjectPicker(false);
+    setLastUploadMessage('เลือกโปรเจกต์แล้ว พร้อมถ่ายบนเครื่องนี้');
+  };
 
   const stopCurrentStream = () => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -273,6 +330,11 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   }, [facingMode, mock]);
 
   useEffect(() => {
+    if (standalone) {
+      setConnectionStatus('One Device mode');
+      return;
+    }
+
     if (mock) {
       setConnectionStatus('Mock mode พร้อมดู UI โดยไม่เชื่อมคอม');
       return;
@@ -325,7 +387,7 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
       connectionRef.current?.close();
       peer.destroy();
     };
-  }, [mock, sessionId]);
+  }, [mock, sessionId, standalone]);
 
   useEffect(() => {
     if (!autoScroll || !teleprompterRef.current) return;
@@ -369,11 +431,51 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
   }, [sessionPayload, selectedShotOrder]);
 
   const sendMessage = (message: MobileToHostMessage) => {
-    if (mock) return;
+    if (mock || standalone) return;
     const connection = connectionRef.current;
     if (connection?.open) {
       connection.send(message);
     }
+  };
+
+  const handleCompletedRecording = async (payload: {
+    itemId: string;
+    shotOrder: number;
+    shotType: 'A-Roll' | 'B-Roll';
+    durationMs: number;
+    mimeType: string;
+    fileName: string;
+    createdAt: number;
+    blob: Blob;
+    buffer: ArrayBuffer;
+  }) => {
+    if (standalone) {
+      await saveVideo({
+        id: typeof window !== 'undefined' && window.crypto?.randomUUID ? window.crypto.randomUUID() : `video-${Date.now()}`,
+        projectId: payload.itemId,
+        shotId: String(payload.shotOrder),
+        blob: payload.blob,
+        fileName: payload.fileName,
+        createdAt: payload.createdAt,
+        durationMs: payload.durationMs,
+        mimeType: payload.mimeType,
+        shotType: payload.shotType,
+      });
+      markShotCompleted(payload.itemId, payload.shotOrder, true);
+      return;
+    }
+
+    sendMessage({
+      type: 'video-upload',
+      itemId: payload.itemId,
+      shotOrder: payload.shotOrder,
+      shotType: payload.shotType,
+      durationMs: payload.durationMs,
+      mimeType: payload.mimeType,
+      fileName: payload.fileName,
+      createdAt: payload.createdAt,
+      buffer: payload.buffer,
+    });
   };
 
   const handleChooseShot = (orderIndex: number) => {
@@ -439,20 +541,23 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
           const buffer = await uploadBlob.arrayBuffer();
           const durationMs = Date.now() - startedAt;
+          const createdAt = Date.now();
 
-          sendMessage({
-            type: 'video-upload',
+          await handleCompletedRecording({
             itemId: sessionPayload.itemId,
             shotOrder: selectedShot.order_index,
             shotType: selectedShot.shot_type,
             durationMs,
             mimeType: uploadMimeType,
             fileName: uploadFileName,
-            createdAt: Date.now(),
+            createdAt,
+            blob: uploadBlob,
             buffer,
           });
 
-          setLastUploadMessage(isMp4MimeType(uploadMimeType) ? `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว (MP4)` : `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว แต่เครื่องนี้อัดได้เป็น ${uploadMimeType}`);
+          setLastUploadMessage(standalone
+            ? `บันทึกคลิปช็อต ${selectedShot.order_index} ลงเครื่องนี้แล้ว`
+            : isMp4MimeType(uploadMimeType) ? `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว (MP4)` : `ส่งคลิปช็อต ${selectedShot.order_index} กลับเข้าคอมแล้ว แต่เครื่องนี้อัดได้เป็น ${uploadMimeType}`);
 
           const sortedShots = sessionPayload.script.shots.slice().sort((a, b) => a.order_index - b.order_index);
           const currentIndex = sortedShots.findIndex((shot) => shot.order_index === selectedShot.order_index);
@@ -565,22 +670,74 @@ export default function MobileProduction({ sessionId, mock = false }: { sessionI
 
           <div className="relative z-20 flex min-h-[100svh] flex-col justify-between px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 backdrop-blur-md">
-                <div className={`h-2 w-2 rounded-full ${mock || connectionRef.current?.open ? 'animate-pulse bg-green-400' : 'bg-red-400'}`} />
-                <span className="text-[10px] font-medium uppercase tracking-wider text-white/80">{connectionStatus}</span>
-              </div>
-
-              {sessionPayload ? (
+              <div className="flex min-w-0 items-center gap-2">
+                {standalone && onExit ? (
+                  <button
+                    type="button"
+                    onClick={onExit}
+                    className="pointer-events-auto rounded-full border border-white/10 bg-black/20 p-2 text-white/80 backdrop-blur-md transition active:scale-95"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={() => setShowShotPicker((current) => !current)}
-                  className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-1.5 backdrop-blur-md transition active:scale-95"
+                  onClick={() => standalone && setShowProjectPicker((current) => !current)}
+                  className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 backdrop-blur-md"
                 >
-                  <span className="text-xs font-bold text-[#bb95ff]">SHOT {selectedShotOrder ?? '-'}</span>
-                  <ChevronDown className={`h-4 w-4 transition-transform ${showShotPicker ? 'rotate-180' : ''}`} />
+                  <div className={`h-2 w-2 shrink-0 rounded-full ${standalone || mock || connectionRef.current?.open ? 'animate-pulse bg-green-400' : 'bg-red-400'}`} />
+                  <span className="truncate text-[10px] font-medium uppercase tracking-wider text-white/80">{standalone && sessionPayload ? sessionPayload.title : connectionStatus}</span>
                 </button>
-              ) : null}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {standalone ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowProjectPicker((current) => !current)}
+                    className="pointer-events-auto rounded-full border border-white/10 bg-black/20 p-2 text-white/80 backdrop-blur-md transition active:scale-95"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </button>
+                ) : null}
+                {sessionPayload ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowShotPicker((current) => !current)}
+                    className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-1.5 backdrop-blur-md transition active:scale-95"
+                  >
+                    <span className="text-xs font-bold text-[#bb95ff]">SHOT {selectedShotOrder ?? '-'}</span>
+                    <ChevronDown className={`h-4 w-4 transition-transform ${showShotPicker ? 'rotate-180' : ''}`} />
+                  </button>
+                ) : null}
+              </div>
             </div>
+
+            {showProjectPicker || (standalone && !sessionPayload) ? (
+              <div className="absolute left-4 right-4 top-16 z-30 max-h-[50vh] overflow-auto rounded-2xl border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-2xl">
+                <p className="px-2 pb-2 text-xs font-bold uppercase tracking-[0.18em] text-white/50">My Project</p>
+                {libraryItems.length === 0 ? (
+                  <div className="rounded-2xl bg-white/8 p-4 text-sm leading-6 text-white/75">
+                    ยังไม่มีงานในเครื่องนี้ ให้กลับไปสร้างสคริปต์ใน Pre-Production ก่อน แล้วกลับมาเพื่อถ่ายได้ทันที
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {libraryItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => handleSelectLocalProject(item)}
+                        className={`w-full rounded-2xl border p-3 text-left transition ${sessionPayload?.itemId === item.id ? 'border-white/20 bg-[#8d65e7]/35' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                      >
+                        <p className="line-clamp-1 text-sm font-bold text-white">{item.title}</p>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/60">{item.prompt}</p>
+                        <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">{item.script.shots.length} shots</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             {showShotPicker && sessionPayload ? (
               <div className="absolute left-4 right-4 top-16 z-30 max-h-[40vh] overflow-auto rounded-2xl border border-white/10 bg-black/50 p-2 backdrop-blur-xl shadow-2xl">
