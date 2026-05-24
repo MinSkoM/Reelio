@@ -621,6 +621,11 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
     }
   };
 
+  const handleSwitchCamera = () => {
+    if (isRecording || countdown != null || isSending) return;
+    setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'));
+  };
+
   const handleZoomRangeChange = async (value: number) => {
     const track = streamRef.current?.getVideoTracks()[0];
     if (!track || !zoomCapability) return;
@@ -669,13 +674,13 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/70" />
 
           <div className="relative z-20 flex min-h-[100svh] flex-col justify-between px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))]">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 rounded-full border border-white/10 bg-black/20 p-1.5 backdrop-blur-md">
               <div className="flex min-w-0 items-center gap-2">
                 {standalone && onExit ? (
                   <button
                     type="button"
                     onClick={onExit}
-                    className="pointer-events-auto rounded-full border border-white/10 bg-black/20 p-2 text-white/80 backdrop-blur-md transition active:scale-95"
+                    className="pointer-events-auto rounded-full bg-white/10 p-2 text-white/80 transition active:scale-95"
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </button>
@@ -683,7 +688,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
                 <button
                   type="button"
                   onClick={() => standalone && setShowProjectPicker((current) => !current)}
-                  className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 backdrop-blur-md"
+                  className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full px-3 py-1.5"
                 >
                   <div className={`h-2 w-2 shrink-0 rounded-full ${standalone || mock || connectionRef.current?.open ? 'animate-pulse bg-green-400' : 'bg-red-400'}`} />
                   <span className="truncate text-[10px] font-medium uppercase tracking-wider text-white/80">{standalone && sessionPayload ? sessionPayload.title : connectionStatus}</span>
@@ -695,7 +700,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
                   <button
                     type="button"
                     onClick={() => setShowProjectPicker((current) => !current)}
-                    className="pointer-events-auto rounded-full border border-white/10 bg-black/20 p-2 text-white/80 backdrop-blur-md transition active:scale-95"
+                    className="pointer-events-auto rounded-full bg-white/10 p-2 text-white/80 transition active:scale-95"
                   >
                     <FolderOpen className="h-4 w-4" />
                   </button>
@@ -704,7 +709,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
                   <button
                     type="button"
                     onClick={() => setShowShotPicker((current) => !current)}
-                    className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-4 py-1.5 backdrop-blur-md transition active:scale-95"
+                    className="pointer-events-auto flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 transition active:scale-95"
                   >
                     <span className="text-xs font-bold text-[#bb95ff]">SHOT {selectedShotOrder ?? '-'}</span>
                     <ChevronDown className={`h-4 w-4 transition-transform ${showShotPicker ? 'rotate-180' : ''}`} />
@@ -714,7 +719,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
             </div>
 
             {showProjectPicker || (standalone && !sessionPayload) ? (
-              <div className="absolute left-4 right-4 top-16 z-30 max-h-[50vh] overflow-auto rounded-2xl border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-2xl">
+              <div className="absolute left-4 right-4 top-20 z-30 max-h-[58vh] overflow-auto rounded-[1.75rem] border border-white/10 bg-black/75 p-3 backdrop-blur-xl shadow-2xl">
                 <p className="px-2 pb-2 text-xs font-bold uppercase tracking-[0.18em] text-white/50">My Project</p>
                 {libraryItems.length === 0 ? (
                   <div className="rounded-2xl bg-white/8 p-4 text-sm leading-6 text-white/75">
@@ -740,7 +745,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
             ) : null}
 
             {showShotPicker && sessionPayload ? (
-              <div className="absolute left-4 right-4 top-16 z-30 max-h-[40vh] overflow-auto rounded-2xl border border-white/10 bg-black/50 p-2 backdrop-blur-xl shadow-2xl">
+              <div className="absolute left-4 right-4 top-20 z-30 max-h-[48vh] overflow-auto rounded-[1.75rem] border border-white/10 bg-black/70 p-2 backdrop-blur-xl shadow-2xl">
                 <div className="space-y-1">
                   {sessionPayload.script.shots
                     .slice()
@@ -762,13 +767,18 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
               </div>
             ) : null}
 
-            <div className="pointer-events-none flex flex-1 flex-col justify-top px-2 mt-4">
+            <div className="pointer-events-none flex flex-1 flex-col justify-start px-2 pt-8">
               {selectedShot ? (
                 <div className="space-y-5">
                   <div ref={teleprompterRef} className="max-h-[35vh] overflow-y-auto pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <p className="text-center text-[1.5rem] font-bold leading-tight text-white/40 drop-shadow-[0_2px_10px_rgba(0,0,0,0.95)] sm:text-[2.7rem]">
+                    <p className="text-center text-[1.75rem] font-black leading-tight text-white/82 drop-shadow-[0_2px_14px_rgba(0,0,0,0.95)] sm:text-[2.7rem]">
                       {selectedShot.script_text}
                     </p>
+                    {selectedShot.on_screen_text?.trim() ? (
+                      <p className="mx-auto mt-4 max-w-xs rounded-2xl border border-white/10 bg-black/35 px-4 py-3 text-center text-sm font-bold leading-6 text-white/80 backdrop-blur-md">
+                        Text on video: {selectedShot.on_screen_text.trim()}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : (
@@ -778,19 +788,19 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
 
             
 
-            <div className="space-y-4">
+            <div className="space-y-4 rounded-[2rem] border border-white/10 bg-black/30 p-3 backdrop-blur-xl">
               <div className="px-4 flex items-center justify-center gap-4">
                 <button
                     type="button"
                     onClick={() => setCountdownEnabled((current) => !current)}
-                    className={`rounded-full px-4 py-2 text-xs font-bold transition ${countdownEnabled ? 'bg-[#8d65e7] text-white' : 'bg-white/10 text-white/70'}`}
+                    className={`min-h-10 rounded-full px-4 py-2 text-xs font-bold transition ${countdownEnabled ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}
                   >
                     {countdownEnabled ? 'countdown 3 sec' : 'countdown 3 sec'}
                   </button>
               </div>
               {zoomCapability ? (
                 <div className="px-4">
-                  <div className="pointer-events-auto rounded-half border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-md">
+                  <div className="pointer-events-auto rounded-2xl border border-white/10 bg-white/10 px-4 py-3">
                     <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/50">
                       <span>Zoom</span>
                       <span>{zoomLevel.toFixed(1)}x</span>
@@ -811,10 +821,11 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
               <div className="grid grid-cols-3 items-center gap-4 px-2">
                 <button
                   type="button"
-                  onClick={() => setFacingMode((prev) => (prev === 'environment' ? 'user' : 'environment'))}
-                  className="pointer-events-auto flex flex-col items-center gap-1 text-white/70 active:text-white"
+                  onClick={handleSwitchCamera}
+                  disabled={isRecording || countdown != null || isSending}
+                  className="pointer-events-auto flex flex-col items-center gap-1 text-white/70 active:text-white disabled:opacity-30"
                 >
-                  <div className="rounded-full border border-white/5 bg-black/20 p-3 backdrop-blur-md">
+                  <div className="rounded-full border border-white/10 bg-white/10 p-3">
                     <RotateCcw className="h-5 w-5" />
                   </div>
                   <span className="text-[9px] font-bold uppercase">สลับกล้อง</span>
@@ -845,7 +856,7 @@ export default function MobileProduction({ sessionId, mock = false, standalone =
                   disabled={!torchSupported}
                   className={`pointer-events-auto flex flex-col items-center gap-1 transition-opacity ${torchOn ? 'text-yellow-400' : 'text-white/70'} disabled:opacity-25`}
                 >
-                  <div className="rounded-full border border-white/5 bg-black/20 p-3 backdrop-blur-md">
+                  <div className="rounded-full border border-white/10 bg-white/10 p-3">
                     {torchOn ? <Zap className="h-5 w-5 fill-current" /> : <ZapOff className="h-5 w-5" />}
                   </div>
                   <span className="text-[9px] font-bold uppercase">{torchOn ? 'ปิดแฟลช' : 'เปิดแฟลช'}</span>

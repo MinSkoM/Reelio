@@ -49,24 +49,24 @@
 }
 
 :root {
-    --background: oklch(0.978 0.01 265);
-    --foreground: oklch(0.23 0.03 265);
-    --card: oklch(0.99 0.01 265);
-    --card-foreground: oklch(0.23 0.03 265);
-    --popover: oklch(0.99 0.01 265);
-    --popover-foreground: oklch(0.23 0.03 265);
-    --primary: oklch(0.63 0.16 274);
-    --primary-foreground: oklch(0.98 0.01 265);
-    --secondary: oklch(0.95 0.02 260);
-    --secondary-foreground: oklch(0.23 0.03 265);
-    --muted: oklch(0.96 0.015 262);
-    --muted-foreground: oklch(0.56 0.03 262);
-    --accent: oklch(0.9 0.04 235);
-    --accent-foreground: oklch(0.23 0.03 265);
+    --background: oklch(0.985 0.025 88);
+    --foreground: oklch(0.24 0.03 58);
+    --card: oklch(0.995 0.015 88);
+    --card-foreground: oklch(0.24 0.03 58);
+    --popover: oklch(0.995 0.015 88);
+    --popover-foreground: oklch(0.24 0.03 58);
+    --primary: oklch(0.62 0.15 54);
+    --primary-foreground: oklch(0.99 0.015 88);
+    --secondary: oklch(0.94 0.035 82);
+    --secondary-foreground: oklch(0.27 0.035 58);
+    --muted: oklch(0.95 0.03 82);
+    --muted-foreground: oklch(0.48 0.035 62);
+    --accent: oklch(0.91 0.06 68);
+    --accent-foreground: oklch(0.27 0.035 58);
     --destructive: oklch(0.65 0.2 24);
-    --border: oklch(0.9 0.02 260);
-    --input: oklch(0.9 0.02 260);
-    --ring: oklch(0.7 0.11 252);
+    --border: oklch(0.88 0.035 78);
+    --input: oklch(0.88 0.035 78);
+    --ring: oklch(0.69 0.13 54);
     --chart-1: oklch(0.66 0.16 274);
     --chart-2: oklch(0.7 0.12 234);
     --chart-3: oklch(0.62 0.08 298);
@@ -127,10 +127,85 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(circle at top left, rgba(186, 151, 255, 0.14), transparent 30%),
-      radial-gradient(circle at top right, rgba(92, 105, 180, 0.1), transparent 24%),
-      radial-gradient(circle at bottom left, rgba(129, 135, 170, 0.08), transparent 28%),
-      linear-gradient(180deg, rgba(255,255,255,0.3), rgba(255,255,255,0.04));
+      radial-gradient(circle at top left, rgba(255, 182, 92, 0.23), transparent 30%),
+      radial-gradient(circle at top right, rgba(255, 111, 74, 0.12), transparent 26%),
+      radial-gradient(circle at bottom left, rgba(132, 82, 44, 0.08), transparent 28%),
+      linear-gradient(180deg, rgba(255,250,241,0.9), rgba(246,238,224,0.75));
     min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .cream-app [class*="bg-[#6d7189]"],
+  .cream-app [class*="bg-[#62677f]"],
+  .cream-app [class*="bg-[#5c6078]"] {
+    background: rgba(255, 250, 241, 0.92) !important;
+    border-color: #eadfce !important;
+  }
+
+  .cream-app [class*="bg-[#454963]"],
+  .cream-app [class*="bg-[#2f334b]"],
+  .cream-app [class*="bg-[#2a2d40]"],
+  .cream-app [class*="bg-[#41455f]"],
+  .cream-app [class*="bg-slate-900"] {
+    background: rgba(255, 255, 255, 0.74) !important;
+    border-color: #eadfce !important;
+  }
+
+  .cream-app [class*="bg-white/5"],
+  .cream-app [class*="bg-white/6"],
+  .cream-app [class*="bg-white/8"],
+  .cream-app [class*="bg-white/10"],
+  .cream-app [class*="bg-[#8d65e7]/14"],
+  .cream-app [class*="bg-[#8d65e7]/16"],
+  .cream-app [class*="bg-[#8d65e7]/18"],
+  .cream-app [class*="bg-[#8d65e7]/24"],
+  .cream-app [class*="bg-[#8d65e7]/30"] {
+    background: rgba(255, 243, 223, 0.82) !important;
+    border-color: #eadfce !important;
+  }
+
+  .cream-app [class*="bg-[#8d65e7]"],
+  .cream-app [class*="bg-[#c060cc]"] {
+    background: #ffe1b8 !important;
+    color: #7c3516 !important;
+    border-color: #efc99d !important;
+  }
+
+  .cream-app [class*="from-[#A661D6]"],
+  .cream-app [class*="from-[#bf6de8]"] {
+    background-image: linear-gradient(135deg, #ffd18d 0%, #f08a45 55%, #d56f2c 100%) !important;
+    color: #2f241d !important;
+  }
+
+  .cream-app .text-white,
+  .cream-app .text-slate-100,
+  .cream-app .text-slate-200,
+  .cream-app .text-slate-300,
+  .cream-app .text-slate-400,
+  .cream-app .text-slate-500,
+  .cream-app [class*="text-violet"],
+  .cream-app [class*="text-emerald"],
+  .cream-app [class*="text-cyan"],
+  .cream-app [class*="text-[#efe7ff]"],
+  .cream-app [class*="text-[#e7dcff]"],
+  .cream-app [class*="text-[#dcc8ff]"],
+  .cream-app [class*="text-[#f2c7ff]"] {
+    color: #33261d !important;
+  }
+
+  .cream-app input,
+  .cream-app textarea {
+    color: #33261d !important;
+  }
+
+  .cream-app input::placeholder,
+  .cream-app textarea::placeholder {
+    color: #917d6e !important;
+  }
+
+  .cream-app .shadow-2xl,
+  .cream-app .shadow-lg {
+    box-shadow: 0 18px 50px rgba(111, 72, 33, 0.12) !important;
   }
 }

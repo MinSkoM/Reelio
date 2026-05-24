@@ -14,8 +14,11 @@ export interface GeneratedScript {
 export interface ScriptRequest {
   topic: string;
   product?: string;
+  platform?: string;
+  usp?: string;
   audience: string;
   tone: string;
+  cta?: string;
   durationSeconds: number;
 }
 

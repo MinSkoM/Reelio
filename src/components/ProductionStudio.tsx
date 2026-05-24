@@ -453,7 +453,7 @@ export default function ProductionStudio() {
 
 
   return (
-    <div className="mx-auto mt-6 max-w-6xl space-y-5 animate-in fade-in duration-500 sm:mt-8">
+    <div className="mx-auto mt-5 max-w-6xl space-y-5 animate-in fade-in duration-500 sm:mt-8">
       <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
         <CardHeader className="space-y-4 border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -467,7 +467,7 @@ export default function ProductionStudio() {
           </p>
         </CardHeader>
 
-        <CardContent className="grid gap-4 p-4 sm:gap-6 sm:p-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <CardContent className="grid gap-4 p-4 sm:gap-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
           <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-[#5c6078] p-5 shadow-lg">
             <div className="flex items-center gap-2 text-white">
               <Library className="h-5 w-5 text-[#dcc8ff]" />
@@ -485,7 +485,7 @@ export default function ProductionStudio() {
                     key={item.id}
                     type="button"
                     onClick={() => setSelectedItemId(item.id)}
-                    className={`w-full rounded-[1.25rem] border p-4 text-left transition-all duration-300 ${selectedItem?.id === item.id ? 'border-[#b48cff]/40 bg-[#8d65e7]/16 text-white' : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'}`}
+                    className={`w-full rounded-[1.25rem] border p-4 text-left transition-all duration-300 ${selectedItem?.id === item.id ? 'border-[#d56f2c]/35 bg-[#fff0dc] text-[#2f241d] shadow-md' : 'border-white/10 bg-white/5 text-slate-100 hover:bg-white/10'}`}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge className="bg-[#8d65e7] text-white">{item.mode === 'brief' ? 'สคริปต์พร้อมช็อต' : 'แตกจากสคริปต์'}</Badge>
@@ -499,14 +499,14 @@ export default function ProductionStudio() {
             )}
           </div>
 
-          <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-[#5c6078] p-5 shadow-lg">
+          <div className="space-y-4 rounded-[1.5rem] border border-white/10 bg-[#5c6078] p-5 shadow-lg lg:sticky lg:top-24">
             <div className="flex items-center gap-2 text-white">
               <QrCode className="h-5 w-5 text-[#dcc8ff]" />
               <h3 className="text-xl font-bold">2. สแกน QR จากมือถือ</h3>
             </div>
             
-            <div className="grid gap-4 md:grid-cols-[220px_1fr] md:items-center">
-              <div className="mx-auto w-fit rounded-[1.5rem] bg-white p-4">
+            <div className="grid gap-4">
+              <div className="mx-auto w-full max-w-[260px] rounded-[1.5rem] bg-white p-4">
                 {sessionUrl ? <QRCode value={sessionUrl} size={188} className="h-auto w-full" /> : null}
               </div>
             
@@ -533,7 +533,7 @@ export default function ProductionStudio() {
                   type="button"
                   variant="outline"
                   onClick={handleResetSession}
-                  className="items-center rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 text-[#efe7ff] hover:bg-[#8d65e7]/24"
+                  className="min-h-12 w-full items-center rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 text-[#efe7ff] hover:bg-[#8d65e7]/24"
                 >
                   <RefreshCw className="mr-2 h-4 w-4" />
                   สร้าง QR ใหม่
@@ -545,7 +545,7 @@ export default function ProductionStudio() {
       </Card>
 
       {selectedItem ? (
-        <div className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
           <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
             <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -562,11 +562,11 @@ export default function ProductionStudio() {
                   <span>{selectedProgress.percent}%</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-black/20">
-                  <div className="h-full rounded-full bg-gradient-to-r from-[#a661d6] via-[#8d65e7] to-[#6d66da] transition-all duration-500" style={{ width: `${selectedProgress.percent}%` }} />
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#75A9E6] to-[#97C7FF] transition-all duration-500" style={{ width: `${selectedProgress.percent}%` }} />
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3 p-6 sm:p-8">
+            <CardContent className="space-y-3 p-4 sm:p-6 lg:p-8">
               {selectedItem.script.shots
                 .slice()
                 .sort((a, b) => a.order_index - b.order_index)
@@ -579,7 +579,7 @@ export default function ProductionStudio() {
                       key={shot.order_index}
                       type="button"
                       onClick={() => handleSelectShot(shot.order_index)}
-                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isActive ? 'border-[#c29aff]/40 bg-[#8d65e7]/16' : isCompleted ? 'border-white/10 bg-[#565b72] opacity-75 hover:bg-[#62677f]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                      className={`w-full rounded-[1.5rem] border p-4 text-left transition-all duration-300 ${isActive ? 'border-[#d56f2c]/35 bg-[#fff0dc] shadow-md' : isCompleted ? 'border-white/10 bg-[#565b72] opacity-75 hover:bg-[#62677f]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="space-y-3">
@@ -617,34 +617,36 @@ export default function ProductionStudio() {
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
+          <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl lg:sticky lg:top-24">
             <CardHeader className="border-b border-white/8 bg-[#6d7189] px-6 pb-6 pt-6 sm:px-8">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-col gap-3">
                 <div>
                   <p className="text-sm font-bold tracking-wide text-[#e7dcff]">4. คลิปที่รับกลับมาบนคอม</p>
                   <CardTitle className="text-2xl font-black tracking-tight text-white">เรียงตามเลขช็อตและพร้อม export</CardTitle>
                 </div>
-                <Button
-                  type="button"
-                  onClick={handleExportZip}
-                  disabled={receivedVideos.length === 0}
-                  className="rounded-2xl bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] px-4 text-white hover:opacity-95"
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Export ZIP
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => { void handleShareZip(); }}
-                  disabled={receivedVideos.length === 0}
-                  className="rounded-2xl border border-white/10 bg-[#2f334b] px-4 text-white hover:bg-[#3b4057]"
-                >
-                  <Share2 className="mr-2 h-4 w-4" />
-                  Share file
-                </Button>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    type="button"
+                    onClick={handleExportZip}
+                    disabled={receivedVideos.length === 0}
+                    className="min-h-12 rounded-2xl bg-[#FFAC6F] px-4 text-white hover:opacity-95"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Export ZIP
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => { void handleShareZip(); }}
+                    disabled={receivedVideos.length === 0}
+                    className="min-h-12 rounded-2xl border border-white/10 bg-[#2f334b] px-4 text-white hover:bg-[#3b4057]"
+                  >
+                    <Share2 className="mr-2 h-4 w-4" />
+                    Share file
+                  </Button>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3 p-6 sm:p-8">
+            <CardContent className="max-h-none space-y-3 p-4 sm:p-6 lg:max-h-[70vh] lg:overflow-auto lg:p-8">
               {receivedVideos.length === 0 ? (
                 <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-4 text-slate-200">
                   ยังไม่มีคลิปถูกส่งเข้ามา ลองสแกน QR บนมือถือ เลือกช็อต แล้วอัดคลิปจากหน้านั้น
@@ -665,11 +667,11 @@ export default function ProductionStudio() {
                           {video.durationMs ? ` · ${Math.round(video.durationMs / 100) / 10} วินาที` : ''}
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="grid gap-2 sm:flex sm:flex-wrap">
                         <Button
                           type="button"
                           onClick={() => downloadBlob(video.blob, video.fileName)}
-                          className="rounded-2xl border border-white/10 bg-[#2f334b] px-4 text-white hover:bg-[#3b4057]"
+                          className="min-h-11 rounded-2xl border border-white/10 bg-[#2f334b] px-4 text-white hover:bg-[#3b4057]"
                         >
                           <Download className="mr-2 h-4 w-4" />
                           ดาวน์โหลดไฟล์นี้
@@ -677,7 +679,7 @@ export default function ProductionStudio() {
                         <Button
                           type="button"
                           onClick={() => { void handleShareVideo(video); }}
-                          className="rounded-2xl border border-white/10 bg-[#8d65e7]/18 px-4 text-white hover:bg-[#8d65e7]/26"
+                          className="min-h-11 rounded-2xl border border-white/10 bg-[#8d65e7]/18 px-4 text-white hover:bg-[#8d65e7]/26"
                         >
                           <Share2 className="mr-2 h-4 w-4" />
                           Share file
@@ -686,7 +688,7 @@ export default function ProductionStudio() {
                           type="button"
                           variant="outline"
                           onClick={() => { void handleDeleteVideo(video.id); }}
-                          className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                          className="min-h-11 rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           ลบ

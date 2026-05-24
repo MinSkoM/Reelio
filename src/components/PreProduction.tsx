@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import JSZip from 'jszip';
 import { breakScriptIntoShots, fetchQuotaStatus, generateScript, GeneratedScript, QuotaSnapshot } from '../services/geminiService';
 import { getShotTypeLabel } from '../lib/shotLabels';
 import { Button } from './ui/button';
@@ -7,11 +8,14 @@ import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
+import { getVideosByProject, type VideoRecord } from '../lib/db';
 import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
 const topicOptions = ['รีวิวสินค้า', 'สอนทำ', 'เล่าเรื่อง', 'ทริคการเรียน', 'เที่ยว', 'รีวิวอาหาร'];
+const platformOptions = ['TikTok', 'Instagram Reels', 'YouTube Shorts'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
+const ctaOptions = ['สั่งซื้อในตะกร้า', 'กดลิงก์หน้าโปรไฟล์', 'คอมเมนต์คุยกัน', 'กดติดตาม'];
 const durationOptions = [15, 30, 45, 60, 90, 120];
 const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
@@ -33,6 +37,7 @@ type OptionFieldProps = {
   onSelect: (next: string) => void;
   onCustomChange: (next: string) => void;
   customPlaceholder: string;
+  allowCustom?: boolean;
 };
 
 type LibraryItem = {
@@ -81,6 +86,73 @@ function buildExportFileBase() {
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
   ].join('');
+}
+
+function sanitizeFileSegment(value: string) {
+  return value.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'project';
+}
+
+function isMp4MimeType(mimeType?: string) {
+  return Boolean(mimeType && mimeType.toLowerCase().includes('mp4'));
+}
+
+function formatSrtTimestamp(totalMs: number) {
+  const hours = Math.floor(totalMs / 3_600_000);
+  const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((totalMs % 60_000) / 1000);
+  const milliseconds = totalMs % 1000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
+function buildImportantTextSrt(script: GeneratedScript) {
+  let cursorMs = 0;
+  let cueIndex = 1;
+  const cues: string[] = [];
+  const useLegacyFallback = !script.shots.some((shot) => shot.on_screen_text?.trim());
+
+  script.shots
+    .slice()
+    .sort((a, b) => a.order_index - b.order_index)
+    .forEach((shot) => {
+      const text = (shot.on_screen_text?.trim() || (useLegacyFallback ? shot.script_text.trim() : '')).replace(/\s+/g, ' ');
+      const durationMs = Math.max(1000, Math.round((shot.duration_seconds || 3) * 1000));
+      const startMs = cursorMs;
+      const endMs = cursorMs + durationMs;
+      cursorMs = endMs;
+
+      if (!text) return;
+      cues.push([
+        String(cueIndex),
+        `${formatSrtTimestamp(startMs)} --> ${formatSrtTimestamp(endMs)}`,
+        text,
+      ].join('\n'));
+      cueIndex += 1;
+    });
+
+  return cues.join('\n\n');
+}
+
+async function convertBlobToMp4(blob: Blob, fileName: string, mimeType?: string) {
+  const params = new URLSearchParams({
+    fileName,
+    mimeType: mimeType || blob.type || 'video/webm',
+  });
+  const response = await fetch(`/api/convert-video?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': mimeType || blob.type || 'application/octet-stream' },
+    body: blob,
+  });
+
+  if (!response.ok) {
+    let message = 'แปลงวิดีโอเป็น MP4 ไม่สำเร็จ';
+    try {
+      const payload = await response.json();
+      if (payload?.error) message = String(payload.error);
+    } catch {}
+    throw new Error(message);
+  }
+
+  return response.blob();
 }
 
 function getTopicDetailConfig(topic: string) {
@@ -146,13 +218,26 @@ function saveLibrary(items: LibraryItem[]) {
   window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(items));
 }
 
-export default function PreProduction({ initialPageView = 'editor' }: { initialPageView?: 'editor' | 'library' }) {
+export default function PreProduction({
+  initialPageView = 'editor',
+  onStartProduction,
+  onBackToEditor,
+  onBackToLibrary,
+}: {
+  initialPageView?: 'editor' | 'library';
+  onStartProduction?: () => void;
+  onBackToEditor?: () => void;
+  onBackToLibrary?: () => void;
+}) {
   const [pageView, setPageView] = useState<PageView>(initialPageView);
   const [mode, setMode] = useState<Mode>('brief');
   const [topic, setTopic] = useState(topicOptions[0]);
+  const [platform, setPlatform] = useState(platformOptions[0]);
   const [topicDetail, setTopicDetail] = useState('');
+  const [usp, setUsp] = useState('');
   const [audience, setAudience] = useState(audienceOptions[0]);
   const [tone, setTone] = useState(toneOptions[0]);
+  const [cta, setCta] = useState(ctaOptions[0]);
   const [customTopic, setCustomTopic] = useState('');
   const [customAudience, setCustomAudience] = useState('');
   const [customTone, setCustomTone] = useState('');
@@ -164,6 +249,9 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [activeLibraryItemId, setActiveLibraryItemId] = useState<string | null>(null);
   const [completedShots, setCompletedShots] = useState<Record<number, boolean>>({});
+  const [libraryVideos, setLibraryVideos] = useState<Record<string, VideoRecord[]>>({});
+  const [exportingLibraryItemId, setExportingLibraryItemId] = useState<string | null>(null);
+  const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const [progressVersion, setProgressVersion] = useState(0);
   const [editingScript, setEditingScript] = useState(false);
   const [quotaStatus, setQuotaStatus] = useState<QuotaStatus>({
@@ -172,6 +260,16 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     remainingText: 'กำลังดึงจำนวนคงเหลือของผู้ใช้คนนี้จาก server',
     resetText: 'ถ้าเพิ่งเปิดหน้าใหม่ รอสักครู่แล้วระบบจะอัปเดตให้เอง',
   });
+
+  const goToEditor = () => {
+    setPageView('editor');
+    onBackToEditor?.();
+  };
+
+  const goToLibrary = () => {
+    setPageView('library');
+    onBackToLibrary?.();
+  };
 
   useEffect(() => {
     setLibraryItems(loadLibrary());
@@ -231,18 +329,46 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     };
   }, [script, activeLibraryItemId]);
 
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const entries = await Promise.all(
+        libraryItems.map(async (item) => {
+          const videos = await getVideosByProject(item.id);
+          videos.sort((a, b) => {
+            const shotCompare = Number(a.shotId) - Number(b.shotId);
+            if (shotCompare !== 0) return shotCompare;
+            return a.createdAt - b.createdAt;
+          });
+          return [item.id, videos] as const;
+        }),
+      );
+
+      if (active) {
+        setLibraryVideos(Object.fromEntries(entries));
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [libraryItems, progressVersion]);
+
   const prompt = useMemo(() => {
     if (mode === 'script') {
       return `แตกช็อตจากสคริปต์เดิม ความยาวรวม ${durationSeconds} วินาที`;
     }
 
     const parts = [effectiveTopic];
+    parts.push(platform);
     if (effectiveDetail) parts.push(effectiveDetail);
+    if (usp.trim()) parts.push(`USP: ${usp.trim()}`);
     parts.push(`สำหรับ ${audience}`);
     parts.push(`โทน${tone}`);
+    parts.push(`CTA: ${cta}`);
     parts.push(`ความยาวรวม ${durationSeconds} วินาที`);
     return parts.join(' · ');
-  }, [mode, effectiveTopic, effectiveDetail, audience, tone, durationSeconds]);
+  }, [mode, effectiveTopic, platform, effectiveDetail, usp, audience, tone, cta, durationSeconds]);
 
   const currentLibraryItem = useMemo(
     () => libraryItems.find((item) => item.id === activeLibraryItemId) || null,
@@ -339,8 +465,11 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
         ? await generateScript({
             topic: effectiveTopic,
             product: effectiveDetail || undefined,
+            platform,
+            usp: usp.trim() || undefined,
             audience,
             tone,
+            cta,
             durationSeconds,
           })
         : await breakScriptIntoShots(existingScript, durationSeconds);
@@ -418,6 +547,82 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const downloadBlob = (content: Blob, fileName: string) => {
+    const url = URL.createObjectURL(content);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const buildProjectZipBlob = async (item: LibraryItem, videos: VideoRecord[]) => {
+    const zip = new JSZip();
+    const takeCounts: Record<string, number> = {};
+
+    const sortedVideos = videos.slice().sort((a, b) => {
+      const shotCompare = Number(a.shotId) - Number(b.shotId);
+      if (shotCompare !== 0) return shotCompare;
+      return a.createdAt - b.createdAt;
+    });
+
+    for (const video of sortedVideos) {
+      takeCounts[video.shotId] = (takeCounts[video.shotId] || 0) + 1;
+      const shotNumber = String(video.shotId).padStart(2, '0');
+      const takeNumber = String(takeCounts[video.shotId]).padStart(2, '0');
+      const fileName = `shot-${shotNumber}-take-${takeNumber}.mp4`;
+      const mp4Blob = isMp4MimeType(video.mimeType) ? video.blob : await convertBlobToMp4(video.blob, video.fileName, video.mimeType);
+      zip.file(fileName, mp4Blob);
+    }
+
+    const srt = buildImportantTextSrt(item.script);
+    if (srt) {
+      zip.file('important-text.srt', `${srt}\n`);
+    }
+
+    return zip.generateAsync({ type: 'blob' });
+  };
+
+  const handleDownloadProjectClips = async (item: LibraryItem) => {
+    setExportingLibraryItemId(item.id);
+    try {
+      const videos = await getVideosByProject(item.id);
+      if (videos.length === 0) {
+        alert('โปรเจกต์นี้ยังไม่มีคลิปที่ถ่ายไว้');
+        return;
+      }
+
+      const blob = await buildProjectZipBlob(item, videos);
+      downloadBlob(blob, `${buildExportFileBase()}-${sanitizeFileSegment(item.title)}-clips.zip`);
+    } catch (error: any) {
+      alert(error?.message || 'โหลดคลิปจากคลังไม่สำเร็จ');
+    } finally {
+      setExportingLibraryItemId(null);
+    }
+  };
+
+  const getShotTakeFileName = (video: VideoRecord, videos: VideoRecord[]) => {
+    const sortedVideos = videos.slice().sort((a, b) => {
+      const shotCompare = Number(a.shotId) - Number(b.shotId);
+      if (shotCompare !== 0) return shotCompare;
+      return a.createdAt - b.createdAt;
+    });
+    const takeNumber = sortedVideos.filter((item) => item.shotId === video.shotId && item.createdAt <= video.createdAt).length || 1;
+    return `shot-${String(video.shotId).padStart(2, '0')}-take-${String(takeNumber).padStart(2, '0')}.mp4`;
+  };
+
+  const handleDownloadSingleClip = async (video: VideoRecord, videos: VideoRecord[]) => {
+    setDownloadingVideoId(video.id);
+    try {
+      const mp4Blob = isMp4MimeType(video.mimeType) ? video.blob : await convertBlobToMp4(video.blob, video.fileName, video.mimeType);
+      downloadBlob(mp4Blob, getShotTakeFileName(video, videos));
+    } catch (error: any) {
+      alert(error?.message || 'ดาวน์โหลดคลิปไม่สำเร็จ');
+    } finally {
+      setDownloadingVideoId(null);
+    }
   };
 
   const buildCaptionText = () => {
@@ -501,71 +706,88 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
     }
   };
 
-  const renderOptionRow = ({ label, options, value, customValue, onSelect, onCustomChange, customPlaceholder }: OptionFieldProps) => {
+  const renderOptionRow = ({ label, options, value, customValue, onSelect, onCustomChange, customPlaceholder, allowCustom = true }: OptionFieldProps) => {
     const usingCustom = !options.includes(value);
+    const handleSelectCustom = () => {
+      onSelect(customValue.trim() || 'อื่น ๆ');
+    };
 
     return (
-      <div className="space-y-3">
-        <p className="text-sm font-semibold text-slate-100">{label}</p>
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-semibold text-slate-100">{label}</legend>
         <div className="flex flex-wrap gap-2">
-          {options.map((option) => (
+          {options.map((option) => {
+            const selected = value === option;
+            return (
+              <Button
+                key={option}
+                type="button"
+                variant={selected ? 'default' : 'outline'}
+                aria-pressed={selected}
+                className={
+                  selected
+                    ? 'h-11 rounded-full bg-[#F6D9B8] px-4 text-white shadow-md shadow-cyan-950/20 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'
+                    : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f] focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'
+                }
+                onClick={() => onSelect(option)}
+              >
+                {selected ? <CheckCircle2 className="mr-2 h-4 w-4" /> : null}
+                {option}
+              </Button>
+            );
+          })}
+          {allowCustom ? (
             <Button
-              key={option}
               type="button"
-              variant={value === option ? 'default' : 'outline'}
+              variant={usingCustom ? 'default' : 'outline'}
               className={
-                value === option
-                  ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20'
-                  : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'
+                usingCustom
+                  ? 'h-11 rounded-full border-violet-300/35 bg-[#F6D9B8] px-4 text-white shadow-md shadow-cyan-950/20 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'
+                  : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f] focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'
               }
-              onClick={() => onSelect(option)}
+              aria-pressed={usingCustom}
+              onPointerDown={handleSelectCustom}
+              onClick={handleSelectCustom}
             >
-              {option}
+              {usingCustom ? <CheckCircle2 className="mr-2 h-4 w-4" /> : null}
+              อื่น ๆ
             </Button>
-          ))}
-          <Button
-            type="button"
-            variant={usingCustom ? 'default' : 'outline'}
-            className={
-              usingCustom
-                ? 'h-11 rounded-full border-violet-300/35 bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20'
-                : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'
-            }
-            onClick={() => onSelect(customValue.trim() || 'อื่น ๆ')}
-          >
-            อื่น ๆ
-          </Button>
+          ) : null}
         </div>
-        {usingCustom ? (
-          <Input
-            value={customValue}
-            onChange={(e) => {
-              const next = e.target.value;
-              onCustomChange(next);
-              onSelect(next.trim() || 'อื่น ๆ');
-            }}
-            placeholder={customPlaceholder}
-            className="h-12 rounded-2xl border-fuchsia-300/35 bg-fuchsia-400/10 px-4 text-white placeholder:text-violet-100/55 focus-visible:border-fuchsia-200 focus-visible:ring-fuchsia-200/30"
-          />
+        {allowCustom && usingCustom ? (
+          <div className="space-y-2">
+            <Input
+              autoFocus
+              value={customValue}
+              onChange={(e) => {
+                const next = e.target.value;
+                onCustomChange(next);
+                onSelect(next.trim() || 'อื่น ๆ');
+              }}
+              placeholder={customPlaceholder}
+              className="h-12 rounded-2xl border-fuchsia-300/35 bg-fuchsia-400/10 px-4 text-white placeholder:text-violet-100/70 focus-visible:border-[#f0b35a] focus-visible:ring-[#f0b35a]/35"
+            />
+            <p className="text-xs leading-5 text-slate-200">พิมพ์คำของคุณเองในช่องนี้ เช่น กลุ่มเป้าหมายเฉพาะหรือโทนที่ไม่มีในตัวเลือก</p>
+          </div>
         ) : null}
-      </div>
+      </fieldset>
     );
   };
 
   if (pageView === 'library') {
     return (
-      <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-500">
+      <div className="mx-auto mt-5 max-w-6xl space-y-5 animate-in fade-in duration-500 sm:mt-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Button
             type="button"
             variant="outline"
-            onClick={() => setPageView('editor')}
+            onClick={goToEditor}
             className="rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
             กลับไปสร้างงาน
           </Button>
-          <div className="rounded-full bg-[#8d65e6] px-4 py-2 text-sm font-semibold text-[#efe7ff]">
+          <div className="rounded-full bg-[#FFAC6F] px-4 py-2 text-sm font-semibold text-[#efe7ff]">
             มีทั้งหมด {libraryItems.length} งานในคลังของเครื่องนี้
           </div>
         </div>
@@ -576,18 +798,20 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
             <CardTitle className="text-3xl font-black tracking-tight text-white sm:text-4xl">สคริปต์และช็อตลิสต์ที่สร้างไว้</CardTitle>
             <p className="max-w-3xl text-base leading-7 text-slate-200">ทุกงานที่สร้างจากหน้านี้จะถูกเก็บไว้ในเครื่องของคุณ และสามารถเปิดกลับมาดูช็อตลิสต์ต่อได้จากหน้านี้</p>
           </CardHeader>
-          <CardContent className="-mt-6 -mb-6 space-y-4 p-5 sm:p-8">
+          <CardContent className="-mt-6 -mb-6 grid gap-4 p-5 sm:p-8 lg:grid-cols-2">
             {libraryItems.length === 0 ? (
-              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-6 text-slate-200">
+              <div className="rounded-[1.5rem] border border-white/10 bg-white/5 p-6 text-slate-200 lg:col-span-2">
                 ยังไม่มีงาน ลองสร้างสคริปต์หรือช็อตลิสต์ก่อน แล้วงานจะมาอยู่ตรงนี้อัตโนมัติ
               </div>
             ) : (
-              libraryItems.map((item) => (
+              libraryItems.map((item) => {
+                const itemVideos = libraryVideos[item.id] || [];
+                return (
                 <div
                   key={item.id}
-                  className="w-full rounded-[1.5rem] border border-white/10 bg-white/5 p-5 text-left transition-all duration-300 hover:bg-white/10"
+                  className="flex h-full w-full flex-col rounded-[1.5rem] border border-white/10 bg-white/5 p-5 text-left transition-all duration-300 hover:bg-white/10"
                 >
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex h-full flex-col gap-4">
                     <div className="min-w-0 flex-1 space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge className="bg-[#8d65e7] text-white">{item.mode === 'brief' ? 'วางแผนทั้งหมด' : 'สร้างจากสคริปต์'}</Badge>
@@ -604,18 +828,18 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-black/20">
                           <div
-                            className="h-full rounded-full bg-gradient-to-r from-[#a661d6] via-[#8d65e7] to-[#6d66da] transition-all duration-500"
+                            className="h-full rounded-full bg-gradient-to-r from-[#75A9E6] to-[#97C7FF] transition-all duration-500"
                             style={{ width: `${libraryProgress[item.id]?.percent || 0}%` }}
                           />
                         </div>
                       </div>
                     </div>
-                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[190px]">
+                    <div className="mt-auto flex w-full flex-col gap-2 sm:flex-row">
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => openLibraryItem(item)}
-                        className="justify-center rounded-2xl border-white/10 bg-[#8d65e7]/30 px-4 py-3 text-sm font-semibold text-[#efe7ff] hover:bg-[#8d65e7]/40"
+                        className="min-h-12 flex-1 justify-center rounded-2xl border-white/10 bg-[#8d65e7]/30 px-4 py-3 text-sm font-semibold text-[#efe7ff] hover:bg-[#8d65e7]/40"
                       >
                         <FolderOpen className="mr-2 h-4 w-4" />
                         เปิดดู {item.script.shots.length} ช็อต
@@ -623,15 +847,26 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                       <Button
                         type="button"
                         variant="outline"
+                        onClick={() => { void handleDownloadProjectClips(item); }}
+                        disabled={itemVideos.length === 0 || exportingLibraryItemId === item.id}
+                        className="min-h-12 flex-1 justify-center rounded-2xl border-white/10 bg-[#2f334b] px-4 py-3 text-sm font-semibold text-slate-100 hover:bg-[#3b4057] disabled:opacity-45"
+                      >
+                        {exportingLibraryItemId === item.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                        ดาวน์โหลด ZIP {itemVideos.length}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
                         onClick={() => deleteLibraryItem(item)}
-                        className="justify-center rounded-2xl border-white/10 bg-red-500/40 px-4 py-3 text-sm font-semibold text-slate-100 hover:bg-red-500/30"
+                        className="min-h-12 justify-center rounded-2xl border-white/10 bg-red-500/40 px-4 py-3 text-sm font-semibold text-slate-100 hover:bg-red-500/30 sm:w-24"
                       >
                         ลบ
                       </Button>
                     </div>
                   </div>
                 </div>
-              ))
+              );
+              })
             )}
           </CardContent>
         </Card>
@@ -642,36 +877,28 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
   if (pageView === 'shot-list' && script) {
     const sortedShots = [...script.shots].sort((a, b) => a.order_index - b.order_index);
     const completedCount = sortedShots.filter((shot) => completedShots[shot.order_index]).length;
+    const activeProjectVideos = activeLibraryItemId ? libraryVideos[activeLibraryItemId] || [] : [];
 
     return (
-      <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-500">
+      <div className="mx-auto mt-5 max-w-6xl space-y-5 animate-in fade-in duration-500 sm:mt-8">
         <Card className="overflow-hidden border-white/8 bg-[#6d7189] shadow-2xl shadow-slate-950/20 backdrop-blur-xl">
           <CardHeader className="space-y-4 border-b border-white/10 bg-[#62677f] px-6 pb-6 pt-6 sm:px-8">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setPageView('editor')}
-                  className="rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
+                  onClick={goToLibrary}
+                  className="min-h-11 rounded-2xl border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]"
                 >
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  กลับไปหน้าหลัก
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setPageView('library')}
-                  className="rounded-2xl border-[#a98eff]/20 bg-[#8d65e7]/16 px-4 text-[#efe7ff] hover:bg-[#8d65e7]/24"
-                >
-                  <Library className="mr-2 h-4 w-4" />
-                  ไปดูในคลัง
+                  ย้อนกลับ
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setEditingScript((current) => !current)}
-                  className="rounded-2xl border-emerald-300/20 bg-emerald-400/12 px-4 text-emerald-50 hover:bg-emerald-400/18"
+                  className="min-h-11 rounded-2xl border-emerald-300/20 bg-emerald-400/12 px-4 text-emerald-50 hover:bg-emerald-400/18"
                 >
                   <Pencil className="mr-2 h-4 w-4" />
                   {editingScript ? 'เสร็จสิ้นการแก้ไข' : 'แก้ไข script'}
@@ -680,7 +907,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                   type="button"
                   variant="outline"
                   onClick={handleDownloadTxt}
-                  className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                  className="min-h-11 rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                 >
                   <Download className="mr-2 h-4 w-4" />
                   ไฟล์ข้อความ
@@ -689,7 +916,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                   type="button"
                   variant="outline"
                   onClick={handleDownloadCsv}
-                  className="rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                  className="min-h-11 rounded-2xl border-white/10 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
                 >
                   <Download className="mr-2 h-4 w-4" />
                   ไฟล์ตาราง
@@ -738,7 +965,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
             </div>
           </CardHeader>
 
-          <CardContent className="space-y-4 p-6 sm:p-8">
+          <CardContent className="space-y-4 p-4 sm:p-6 lg:p-8">
             {editingScript ? (
               <div className="flex justify-end">
                 <Button
@@ -754,33 +981,36 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
             ) : null}
             {sortedShots.map((shot) => {
               const isCompleted = Boolean(completedShots[shot.order_index]);
+              const shotVideos = activeProjectVideos.filter((video) => video.shotId === String(shot.order_index));
               return (
                 <div
                   key={shot.order_index}
-                  className={`rounded-[1.75rem] border p-5 transition-all duration-300 ${
-                    isCompleted
-                      ? 'border-white/10 bg-[#565b72] opacity-70'
-                      : 'border-white/10 bg-white/5 shadow-lg shadow-black/10'
-                  }`}
+                  className={`border border-[#eadfce] shadow-sm transition-all duration-300 ${isCompleted && !editingScript ? 'rounded-[1.25rem] bg-[#FFEDD5] p-2.5' : 'rounded-[1.75rem] bg-white/70 p-5'}`}
                 >
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="space-y-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'}
-                          className={shot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}
-                        >
-                          {getShotTypeLabel(shot.shot_type)}
-                        </Badge>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
-                          ช็อต {shot.order_index}
-                        </span>
-                        <span className="rounded-full border border-violet-300/20 bg-[#8d65e7]/16 px-3 py-1 text-xs font-semibold text-[#efe7ff]">
-                          {shot.duration_seconds} วินาที
-                        </span>
-                      </div>
+                  <div className={isCompleted && !editingScript ? 'flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between' : 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-start'}>
+                    <div className={`min-w-0 ${isCompleted && !editingScript ? 'space-y-2' : 'space-y-4'}`}>
+                      {isCompleted && !editingScript ? (
+                        <p className="truncate px-2 text-sm font-black text-[#2f241d]">ช็อต {shot.order_index}</p>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge
+                            variant={shot.shot_type === 'A-Roll' ? 'default' : 'secondary'}
+                            className={shot.shot_type === 'A-Roll' ? 'bg-[#8d65e7] text-white' : 'bg-[#c060cc] text-white'}
+                          >
+                            {getShotTypeLabel(shot.shot_type)}
+                          </Badge>
+                          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-slate-100">
+                            ช็อต {shot.order_index}
+                          </span>
+                          <span className="rounded-full border border-violet-300/20 bg-[#8d65e7]/16 px-3 py-1 text-xs font-semibold text-[#efe7ff]">
+                            {shot.duration_seconds} วินาที
+                          </span>
+                        </div>
+                      )}
 
-                      {editingScript ? (
+                      {isCompleted && !editingScript ? (
+                        null
+                      ) : editingScript ? (
                         <div className="space-y-3">
                           <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
                             <div className="space-y-2">
@@ -840,16 +1070,16 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                         </div>
                       ) : (
                         <div className="space-y-3">
-                          <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#474c63]' : 'bg-[#2f334b]'}`}>
+                          <div className="rounded-xl border border-[#eadfce] bg-white/70 p-4">
                             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">รายละเอียดช็อต</p>
                             <p className="text-base leading-7 text-white">{shot.visual_description}</p>
                           </div>
-                          <div className={`border-1 rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#4f536b]' : 'bg-[#8d65e7]/14'}`}>
+                          <div className="rounded-xl border border-[#eadfce] bg-[#fffaf1] p-4">
                             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#e7dcff]">สคริปต์</p>
                             <p className="text-base leading-7 text-slate-100">{shot.script_text}</p>
                           </div>
                           {shot.on_screen_text?.trim() ? (
-                            <div className={`rounded-xl p-4 transition-colors duration-300 ${isCompleted ? 'bg-[#445565]' : 'bg-emerald-400/10'}`}>
+                            <div className="rounded-xl border border-[#eadfce] bg-white/70 p-4">
                               <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100">Text on video</p>
                               <p className="text-base font-semibold leading-7 text-emerald-50">{shot.on_screen_text.trim()}</p>
                             </div>
@@ -857,19 +1087,35 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                         </div>
                       )}
                     </div>
-                    <div className="flex w-full flex-col gap-2 sm:w-auto">
+                    <div className={`flex w-full lg:sticky lg:top-24 ${isCompleted && !editingScript ? 'flex-row flex-wrap gap-1.5 sm:w-auto sm:justify-end' : 'flex-col gap-2'}`}>
                       <Button
                         type="button"
                         variant="outline"
                         onClick={() => toggleShotCompleted(shot.order_index)}
-                        className={`inline-flex min-h-14 w-full min-w-[180px] cursor-pointer items-center justify-center rounded-2xl border px-6 py-4 text-base font-bold transition-all duration-300 active:scale-[0.98] sm:w-auto ${
+                        className={`inline-flex cursor-pointer items-center justify-center rounded-2xl border font-bold transition-all duration-300 active:scale-[0.98] ${isCompleted && !editingScript ? 'min-h-9 w-auto min-w-0 px-3 py-1.5 text-xs' : 'min-h-14 w-full min-w-[180px] px-6 py-4 text-base sm:w-auto'} ${
                           isCompleted
-                            ? 'border-white/10 bg-white text-[#2f334b] shadow-md'
-                            : 'border-[#a98eff]/20 bg-[#8d65e7]/18 text-[#efe7ff] hover:bg-[#8d65e7]/28'
+                            ? 'border-[#eadfce] bg-white text-[#5f5148] shadow-sm'
+                            : 'border-[#eadfce] bg-[#fff0dc] text-[#8b3d18] hover:bg-[#ffe1b8]'
                         }`}
                       >
                         {isCompleted ? 'ยกเลิกว่าถ่ายเสร็จแล้ว' : 'ถ่ายเสร็จแล้ว'}
                       </Button>
+                      {!editingScript && shotVideos.length > 0 ? (
+                        <div className={`flex ${isCompleted && !editingScript ? 'flex-row flex-wrap gap-1.5' : 'flex-col gap-2'}`}>
+                          {shotVideos.map((video, index) => (
+                            <Button
+                              key={video.id}
+                              type="button"
+                              onClick={() => { void handleDownloadSingleClip(video, activeProjectVideos); }}
+                              disabled={downloadingVideoId === video.id}
+                              className={`${isCompleted && !editingScript ? 'min-h-9 w-auto min-w-0 px-3 py-1.5 text-xs' : 'min-h-11 w-full min-w-[180px] px-4 text-sm sm:w-auto'} rounded-2xl border border-[#eadfce] bg-white font-bold text-[#5f5148] shadow-sm hover:bg-[#fff7e8] disabled:opacity-50`}
+                            >
+                              {downloadingVideoId === video.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                              ดาวน์โหลดคลิป {shotVideos.length > 1 ? index + 1 : ''}
+                            </Button>
+                          ))}
+                        </div>
+                      ) : null}
                       {editingScript ? (
                         <Button
                           type="button"
@@ -887,6 +1133,24 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
                 </div>
               );
             })}
+            {onStartProduction ? (
+              <div className="rounded-[1.5rem] border border-emerald-300/20 bg-[#2f334b] p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-lg font-black text-white">พร้อมถ่ายคลิปแล้ว?</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-300">ไปเชื่อมต่อกล้อง เลือกช็อต แล้วถ่ายคลิปตามสคริปต์นี้ได้ทันที</p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={onStartProduction}
+                    className="min-h-13 rounded-2xl bg-gradient-to-r from-[#97C7FF] via-[#D2E6FF] to-[#97C7FF] px-6 text-base font-black text-[#182032] shadow-lg shadow-emerald-950/20 hover:opacity-95"
+                  >
+                    <Camera className="mr-2 h-5 w-5" />
+                    เชื่อมต่อกับกล้อง เพื่อถ่ายคลิป
+                  </Button>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -894,7 +1158,7 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
   }
 
   return (
-    <div className="mx-auto mt-10 max-w-5xl space-y-6 animate-in fade-in duration-700">
+    <div className="mx-auto mt-5 max-w-6xl space-y-5 animate-in fade-in duration-700 sm:mt-8">
       <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-cyan-300/35 bg-[#2a2d40] text-white shadow-lg shadow-slate-950/30' : 'border border-violet-300/35 bg-slate-900/85 text-white shadow-lg shadow-violet-950/30'}`}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
@@ -916,15 +1180,15 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 rounded-[2.5rem] bg-[#41455f]/45 p-2 sm:mx-auto sm:w-[92%] sm:flex-row sm:flex-nowrap sm:items-end sm:justify-center sm:gap-0 sm:bg-transparent sm:p-0 sm:-mb-[4px]">
+      <div className="grid gap-2 rounded-[2rem] border border-[#eadfce] bg-white/65 p-2 shadow-lg shadow-[#7b4a1e]/8 sm:mx-auto sm:w-fit sm:grid-cols-2 sm:rounded-[2.5rem]">
         <button
           type="button"
           onClick={() => setMode('brief')}
-          className={`relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:min-w-0 sm:flex-none sm:px-8 rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem] sm:-mb-[1px] ${mode === 'brief'
-            ? 'z-20 h-20 bg-[#6d7189] text-white shadow-lg sm:h-25 sm:w-[49%] sm:shadow-none sm:border-none'
-            : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[45%] sm:bg-[#454963] sm:border sm:border-white/8 sm:border-b-transparent'} ${mode === 'brief' ? 'sm:-mr-4' : ''}`}
+          className={`relative flex min-h-16 w-full items-center gap-3 rounded-[2rem] px-5 text-left transition-all duration-300 ${mode === 'brief'
+            ? 'bg-[#FFEDD5] text-[#8b3d18] shadow-md'
+            : 'bg-transparent text-[#6a5c51] hover:bg-[#fff7e8]'}`}
         >
-          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'brief' ? 'bg-black/20' : 'bg-white/5 sm:bg-white/8'}`}>
+          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${mode === 'brief' ? 'bg-white/70' : 'bg-[#fff3df]'}`}>
             <WandSparkles className="h-5 w-5 sm:h-6 sm:w-6" />
           </span>
           <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">วางแผนทั้งหมด</span>
@@ -933,11 +1197,11 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
         <button
           type="button"
           onClick={() => setMode('script')}
-          className={`relative flex w-full items-center gap-4 px-6 transition-all duration-300 sm:min-w-0 sm:flex-none sm:px-8 rounded-[2rem] sm:rounded-b-none sm:rounded-t-[2rem] sm:-mb-[1px] ${mode === 'script'
-            ? 'z-20 h-20 bg-[#6d7189] text-white shadow-lg sm:h-25 sm:w-[55%] sm:-ml-4 sm:shadow-none sm:border-none'
-            : 'z-10 h-12 bg-transparent text-white/50 sm:h-20 sm:w-[51%] sm:bg-[#454963] sm:border sm:border-white/8 sm:border-b-transparent'}`}
+          className={`relative flex min-h-16 w-full items-center gap-3 rounded-[2rem] px-5 text-left transition-all duration-300 ${mode === 'script'
+            ? 'bg-[#FFEDD5] text-[#8b3d18] shadow-md'
+            : 'bg-transparent text-[#6a5c51] hover:bg-[#fff7e8]'}`}
         >
-          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full sm:h-12 sm:w-12 ${mode === 'script' ? 'bg-black/10' : 'bg-white/5 sm:bg-white/8'}`}>
+          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${mode === 'script' ? 'bg-white/70' : 'bg-[#fff3df]'}`}>
             <Scissors className="h-5 w-5 sm:h-6 sm:w-6" />
           </span>
           <span className="block text-[1rem] font-bold leading-none sm:text-[1.25rem]">สร้างช็อตลิสต์จากสคริปต์</span>
@@ -955,23 +1219,85 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
               : 'วางสคริปต์ที่มีอยู่แล้ว แล้วให้ระบบช่วยตัดเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น'}
           </p>
         </CardHeader>
-        <CardContent className="-mt-3 -mb-3 space-y-6 p-4 sm:p-5">
-          <div className="rounded-[1.5rem] border border-white/12 bg-[#5c6078] p-5 shadow-lg">
+        <CardContent className="-mt-3 -mb-3 grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+          <div className="rounded-[1.5rem] border border-white/12 bg-[#5c6078] p-4 shadow-lg sm:p-5">
             {mode === 'brief' ? (
               <div className="space-y-6">
-                {renderOptionRow({ label: 'ประเภทวิดีโอ', options: topicOptions, value: topic, customValue: customTopic, onSelect: setTopic, onCustomChange: setCustomTopic, customPlaceholder: 'เช่น พาชมห้อง, แต่งหน้าไปเรียน, สรุปข่าวสั้น' })}
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold text-slate-100">{topicDetailConfig.label}</p>
-                  <Input
-                    value={topicDetail}
-                    onChange={(e) => setTopicDetail(e.target.value)}
-                    placeholder={topicDetailConfig.placeholder}
-                    className="h-12 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white placeholder:text-slate-500"
-                  />
-                  <p className="text-sm leading-6 text-slate-400">{topicDetailConfig.helper}</p>
+                <section className="space-y-5 rounded-[1.25rem] border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#8d65e7]/24 text-sm font-black text-white">1</span>
+                    <div>
+                      <p className="text-base font-black text-white">คอนเทนต์หลัก</p>
+                      <p className="text-sm leading-6 text-slate-200">เลือกแนวคลิปและสิ่งที่ต้องการเล่าให้ชัดก่อน</p>
+                    </div>
+                  </div>
+                  {renderOptionRow({ label: 'ประเภทวิดีโอ', options: topicOptions, value: topic, customValue: customTopic, onSelect: setTopic, onCustomChange: setCustomTopic, customPlaceholder: 'เช่น พาชมห้อง, แต่งหน้าไปเรียน, สรุปข่าวสั้น' })}
+                  {renderOptionRow({ label: 'แพลตฟอร์มปลายทาง', options: platformOptions, value: platform, customValue: '', onSelect: setPlatform, onCustomChange: () => {}, customPlaceholder: '', allowCustom: false })}
+                  <div className="space-y-3">
+                    <p className="text-sm mb-0.5 font-semibold text-slate-100">{topicDetailConfig.label}</p>
+                    <p className="text-sm leading-5 text-slate-200">{topicDetailConfig.helper}</p>
+                    <Input
+                      value={topicDetail}
+                      onChange={(e) => setTopicDetail(e.target.value)}
+                      placeholder={topicDetailConfig.placeholder}
+                      className="h-12 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white placeholder:text-slate-400 focus-visible:border-[#f0b35a] focus-visible:ring-[#f0b35a]/35"
+                    />
+                    
+                  </div>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-100">จุดเด่นที่อยากเน้น (USP)</p>
+                      <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-200">Optional</span>
+                    </div>
+                    <Input
+                      value={usp}
+                      onChange={(e) => setUsp(e.target.value)}
+                      placeholder="เช่น ลดสิวไว, พกพาง่าย, ประหยัดไฟ"
+                      className="h-12 rounded-2xl border-white/12 bg-[#2f334b] px-4 text-white placeholder:text-slate-400 focus-visible:border-[#f0b35a] focus-visible:ring-[#f0b35a]/35"
+                    />
+                  </div>
+                </section>
+
+                <section className="space-y-5 rounded-[1.25rem] border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#8d65e7]/24 text-sm font-black text-white">2</span>
+                    <div>
+                      <p className="text-base font-black text-white">คนดูและน้ำเสียง</p>
+                      <p className="text-sm leading-6 text-slate-200">ช่วยให้สคริปต์เลือกคำและจังหวะได้ตรงกลุ่ม</p>
+                    </div>
+                  </div>
+                  {renderOptionRow({ label: 'กลุ่มคนดู', options: audienceOptions, value: audience, customValue: customAudience, onSelect: setAudience, onCustomChange: setCustomAudience, customPlaceholder: 'เช่น เจ้าของร้าน, วัยรุ่น, คนเริ่มเที่ยวเอง' })}
+                  {renderOptionRow({ label: 'โทนคลิป', options: toneOptions, value: tone, customValue: customTone, onSelect: setTone, onCustomChange: setCustomTone, customPlaceholder: 'เช่น หรู, ดราม่า, ขี้เล่น, ดูโปร' })}
+                </section>
+
+                <div className="space-y-5 rounded-[1.25rem] border border-white/10 bg-white/5 p-4">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#8d65e7]/24 text-sm font-black text-white">3</span>
+                    <div>
+                      <p className="text-base font-black text-white">เป้าหมายคลิป</p>
+                      <p className="text-sm leading-6 text-slate-200">กำหนดสิ่งที่อยากให้คนดูทำและความยาวโดยรวม</p>
+                    </div>
+                  </div>
+                  {renderOptionRow({ label: 'สิ่งที่อยากให้คนดูทำ (CTA)', options: ctaOptions, value: cta, customValue: '', onSelect: setCta, onCustomChange: () => {}, customPlaceholder: '', allowCustom: false })}
+                  <fieldset className="space-y-3">
+                    <legend className="text-sm font-semibold text-slate-100">ความยาวคลิปรวม</legend>
+                    <div className="flex flex-wrap gap-2">
+                      {durationOptions.map((seconds) => (
+                        <Button
+                          key={seconds}
+                          type="button"
+                          variant={durationSeconds === seconds ? 'default' : 'outline'}
+                          aria-pressed={durationSeconds === seconds}
+                          className={durationSeconds === seconds ? 'h-11 rounded-full bg-[#EFD5B6] px-4 text-white shadow-md shadow-cyan-950/20 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70' : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f] focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'}
+                          onClick={() => setDurationSeconds(seconds)}
+                        >
+                          {durationSeconds === seconds ? <CheckCircle2 className="mr-2 h-4 w-4" /> : <Clock3 className="mr-2 h-4 w-4" />}
+                          {seconds} วินาที
+                        </Button>
+                      ))}
+                    </div>
+                  </fieldset>
                 </div>
-                {renderOptionRow({ label: 'กลุ่มคนดู', options: audienceOptions, value: audience, customValue: customAudience, onSelect: setAudience, onCustomChange: setCustomAudience, customPlaceholder: 'เช่น เจ้าของร้าน, วัยรุ่น, คนเริ่มเที่ยวเอง' })}
-                {renderOptionRow({ label: 'โทนคลิป', options: toneOptions, value: tone, customValue: customTone, onSelect: setTone, onCustomChange: setCustomTone, customPlaceholder: 'เช่น หรู, ดราม่า, ขี้เล่น, ดูโปร' })}
               </div>
             ) : (
               <div className="space-y-3">
@@ -985,44 +1311,52 @@ export default function PreProduction({ initialPageView = 'editor' }: { initialP
               </div>
             )}
 
-            <div className="mt-6 space-y-3">
-              <p className="text-sm font-semibold text-slate-100">ความยาวคลิปรวม</p>
-              <div className="flex flex-wrap gap-2">
-                {durationOptions.map((seconds) => (
-                  <Button
-                    key={seconds}
-                    type="button"
-                    variant={durationSeconds === seconds ? 'default' : 'outline'}
-                    className={durationSeconds === seconds ? 'h-11 rounded-full bg-gradient-to-r from-[#A661D6] to-[#6D66DA] px-4 text-white shadow-md shadow-cyan-950/20' : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f]'}
-                    onClick={() => setDurationSeconds(seconds)}
-                  >
-                    <Clock3 className="mr-2 h-4 w-4" />
-                    {seconds} วินาที
-                  </Button>
-                ))}
-              </div>
-            </div>
+            {mode === 'script' ? (
+              <fieldset className="mt-6 space-y-3">
+                <legend className="text-sm font-semibold text-slate-100">ความยาวคลิปรวม</legend>
+                <div className="flex flex-wrap gap-2">
+                  {durationOptions.map((seconds) => (
+                    <Button
+                      key={seconds}
+                      type="button"
+                      variant={durationSeconds === seconds ? 'default' : 'outline'}
+                      aria-pressed={durationSeconds === seconds}
+                      className={durationSeconds === seconds ? 'h-11 rounded-full bg-[#F6D9B8] px-4 text-white shadow-md shadow-cyan-950/20 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70' : 'h-11 rounded-full border-white/12 bg-[#454963] px-4 text-slate-100 hover:bg-[#50556f] focus-visible:ring-2 focus-visible:ring-[#f0b35a]/70'}
+                      onClick={() => setDurationSeconds(seconds)}
+                    >
+                      {durationSeconds === seconds ? <CheckCircle2 className="mr-2 h-4 w-4" /> : <Clock3 className="mr-2 h-4 w-4" />}
+                      {seconds} วินาที
+                    </Button>
+                  ))}
+                </div>
+              </fieldset>
+            ) : null}
 
             <Button
               onClick={handleGenerate}
               disabled={loading || (mode === 'script' && !existingScript.trim())}
-              className="mt-6 h-13 w-full rounded-2xl bg-gradient-to-r from-[#bf6de8] via-[#cc7bc5] to-[#e58a2a] px-6 text-base font-bold text-white shadow-lg shadow-[#7b57cf]/20 hover:opacity-95"
+              className="sticky bottom-3 z-20 mt-6 h-13 w-full rounded-2xl bg-[#FFAC6F] px-6 text-base font-bold text-white shadow-lg shadow-[#7b57cf]/20 hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/80 sm:static"
             >
               {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}
               {mode === 'brief' ? 'สร้างสคริปต์และช็อตลิสต์' : 'สร้างช็อตลิสต์'}
             </Button>
           </div>
 
-          <div className="rounded-[1.5rem] bg-[#5c6078] p-5 shadow-lg">
+          <div className="rounded-[1.5rem] bg-[#5c6078] p-5 shadow-lg lg:sticky lg:top-24">
             <p className="mb-3 text-xl font-bold tracking-wide text-white">สรุป :</p>
             <div className="flex items-start gap-3 text-base text-white"><Star className="mt-1 h-4 w-4 text-[#dcc8ff]" />{prompt}</div>
             <div className="mt-4 text-sm leading-7 text-slate-300">
               {mode === 'brief' ? (
-                effectiveDetail ? (
-                  <div className="flex items-start gap-3 text-white"><Package2 className="mt-1 h-4 w-4 text-[#f2c7ff]" /> ประเด็นหลักของคลิปนี้: {effectiveDetail}</div>
-                ) : (
-                  <div>ยังไม่ได้ใส่รายละเอียดเพิ่ม ระบบจะคิดจากประเภทคลิปและกลุ่มคนดูเป็นหลัก</div>
-                )
+                <div className="space-y-2">
+                  <div className="flex items-start gap-3 text-white"><Captions className="mt-1 h-4 w-4 text-[#f2c7ff]" /> แพลตฟอร์มปลายทาง: {platform}</div>
+                  {effectiveDetail ? (
+                    <div className="flex items-start gap-3 text-white"><Package2 className="mt-1 h-4 w-4 text-[#f2c7ff]" /> ประเด็นหลักของคลิปนี้: {effectiveDetail}</div>
+                  ) : (
+                    <div>ยังไม่ได้ใส่รายละเอียดเพิ่ม ระบบจะคิดจากประเภทคลิปและกลุ่มคนดูเป็นหลัก</div>
+                  )}
+                  {usp.trim() ? <div className="flex items-start gap-3 text-white"><Sparkles className="mt-1 h-4 w-4 text-[#f2c7ff]" /> USP ที่จะเน้น: {usp.trim()}</div> : null}
+                  <div className="flex items-start gap-3 text-white"><CheckCircle2 className="mt-1 h-4 w-4 text-[#f2c7ff]" /> CTA: {cta}</div>
+                </div>
               ) : (
                 <div className="flex items-start gap-3 text-white"><FileText className="mt-1 h-4 w-4 text-[#f2c7ff]" /> ระบบจะอ่านสคริปต์เดิม แล้วแตกเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น</div>
               )}
