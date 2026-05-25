@@ -194,7 +194,7 @@ export default function App() {
             <h1 className="text-4xl font-black tracking-tight text-[#2f241d] sm:text-6xl">
               {desktopPage === 'prepro' ? 'Pre-Production' : desktopPage === 'library' ? 'My Project' : desktopPage === 'one-device' ? 'Camera' : 'Control Center'}
             </h1>
-            <p className="max-w-2xl text-base leading-7 text-[#6a5c51] sm:text-lg">
+            <p className="text-base leading-7 text-[#6a5c51] sm:text-lg">
               {desktopPage === 'prepro'
                 ? 'เลือก brief แบบง่าย ๆ หรือวางสคริปต์ที่มีอยู่แล้ว ระบบจะช่วยแยกช็อต, บอกใจความที่ต้องพูด, และระบุภาพที่ควรถ่ายให้เห็นชัดขึ้น'
                 : desktopPage === 'library'
