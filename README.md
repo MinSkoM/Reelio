@@ -1,7 +1,3 @@
-<div align="center">
-<img width="1200" height="475" alt="Reelio" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
-
 # Reelio
 
 An AI-powered video production workflow for short-form creators. Generates a script and shot list from a brief, then syncs a phone camera to the desktop over WebRTC so clips are recorded shot-by-shot and collected for export.
