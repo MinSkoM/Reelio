@@ -15,7 +15,7 @@ const topicOptions = ['รีวิวสินค้า', 'สอนทำ', '�
 const platformOptions = ['TikTok', 'Instagram Reels', 'YouTube Shorts'];
 const audienceOptions = ['มือใหม่', 'นักเรียน นักศึกษา', 'ครีเอเตอร์', 'คนทำงาน'];
 const toneOptions = ['เป็นกันเอง', 'คึกคัก', 'น่าเชื่อถือ', 'สนุก'];
-const ctaOptions = ['สั่งซื้อในตะกร้า', 'กดลิงก์หน้าโปรไฟล์', 'คอมเมนต์คุยกัน', 'กดติดตาม'];
+const ctaOptions = ['แชร์ให้เพื่อน', 'บันทึกไว้ก่อน', 'แท็กเพื่อนมาดู', 'กดติดตาม', 'คอมเมนต์คุยกัน', 'กดลิงก์หน้าโปรไฟล์', 'สั่งซื้อในตะกร้า'];
 const durationOptions = [15, 30, 45, 60, 90, 120];
 const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
@@ -204,6 +204,7 @@ export default function PreProduction({
   const [audience, setAudience] = useState(audienceOptions[0]);
   const [tone, setTone] = useState(toneOptions[0]);
   const [cta, setCta] = useState(ctaOptions[0]);
+  const [customCta, setCustomCta] = useState('');
   const [customTopic, setCustomTopic] = useState('');
   const [customAudience, setCustomAudience] = useState('');
   const [customTone, setCustomTone] = useState('');
@@ -1263,7 +1264,7 @@ export default function PreProduction({
                       <p className="text-sm leading-6 text-slate-200">กำหนดสิ่งที่อยากให้คนดูทำและความยาวโดยรวม</p>
                     </div>
                   </div>
-                  {renderOptionRow({ label: 'สิ่งที่อยากให้คนดูทำ (CTA)', options: ctaOptions, value: cta, customValue: '', onSelect: setCta, onCustomChange: () => {}, customPlaceholder: '', allowCustom: false })}
+                  {renderOptionRow({ label: 'สิ่งที่อยากให้คนดูทำ (CTA)', options: ctaOptions, value: cta, customValue: customCta, onSelect: setCta, onCustomChange: setCustomCta, customPlaceholder: 'เช่น กด Duet ต่อ, ลองทำแล้วมาเล่าให้ฟัง', allowCustom: true })}
                   <fieldset className="space-y-3">
                     <legend className="text-sm font-semibold text-slate-100">ความยาวคลิปรวม</legend>
                     <div className="flex flex-wrap gap-2">
