@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import JSZip from 'jszip';
 import { breakScriptIntoShots, generateScript, GeneratedScript } from '../services/geminiService';
 import { getShotTypeLabel } from '../lib/shotLabels';
@@ -221,6 +221,21 @@ export default function PreProduction({
   const [progressVersion, setProgressVersion] = useState(0);
   const [editingScript, setEditingScript] = useState(false);
 
+  type ApiStatus =
+    | { kind: 'ready' }
+    | { kind: 'countdown'; seconds: number }
+    | { kind: 'daily'; message: string }
+    | { kind: 'error'; message: string };
+
+  const [apiStatus, setApiStatus] = useState<ApiStatus>({ kind: 'ready' });
+  const retryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (retryIntervalRef.current !== null) clearInterval(retryIntervalRef.current);
+    };
+  }, []);
+
   const goToEditor = () => {
     setPageView('editor');
     onBackToEditor?.();
@@ -397,7 +412,20 @@ export default function PreProduction({
     }));
   };
 
+  const cancelRetry = () => {
+    if (retryIntervalRef.current !== null) {
+      clearInterval(retryIntervalRef.current);
+      retryIntervalRef.current = null;
+    }
+    setApiStatus({ kind: 'ready' });
+  };
+
   const handleGenerate = async () => {
+    if (retryIntervalRef.current !== null) {
+      clearInterval(retryIntervalRef.current);
+      retryIntervalRef.current = null;
+    }
+    setApiStatus({ kind: 'ready' });
     setLoading(true);
     try {
       const nextScript = mode === 'brief'
@@ -428,9 +456,26 @@ export default function PreProduction({
       persistLibraryItem(libraryItem);
       setPageView('shot-list');
     } catch (error: any) {
-      const details = error?.message || String(error);
       console.error('AI Error:', error);
-      alert(mode === 'brief' ? `สร้างสคริปต์ไม่สำเร็จ: ${details}` : `แตกช็อตจากสคริปต์ไม่สำเร็จ: ${details}`);
+      if (error?.isRateLimit && error?.retryAfterMs && error?.rateLimitKind !== 'daily') {
+        let seconds = Math.ceil(error.retryAfterMs / 1000);
+        setApiStatus({ kind: 'countdown', seconds });
+        retryIntervalRef.current = setInterval(() => {
+          seconds -= 1;
+          if (seconds <= 0) {
+            clearInterval(retryIntervalRef.current!);
+            retryIntervalRef.current = null;
+            setApiStatus({ kind: 'ready' });
+            void handleGenerate();
+          } else {
+            setApiStatus({ kind: 'countdown', seconds });
+          }
+        }, 1000);
+      } else if (error?.isRateLimit && error?.rateLimitKind === 'daily') {
+        setApiStatus({ kind: 'daily', message: error.message });
+      } else {
+        setApiStatus({ kind: 'error', message: error?.message || String(error) });
+      }
     } finally {
       setLoading(false);
     }
@@ -1131,6 +1176,33 @@ export default function PreProduction({
               ? 'เลือกประเภทคลิป แล้วเติมเรื่องที่อยากพูดให้ชัด ระบบจะช่วยคิดทั้งสคริปต์และสิ่งที่ต้องถ่าย'
               : 'วางสคริปต์ที่มีอยู่แล้ว แล้วให้ระบบช่วยตัดเป็นช็อตที่ถ่ายจริงได้ง่ายขึ้น'}
           </p>
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${
+              loading ? 'animate-pulse bg-amber-400' :
+              apiStatus.kind === 'ready' ? 'bg-emerald-400' :
+              apiStatus.kind === 'countdown' ? 'bg-amber-400' :
+              'bg-red-400'
+            }`} />
+            <span className="text-sm font-semibold text-slate-200">
+              {loading
+                ? 'Gemini API · กำลังสร้าง...'
+                : apiStatus.kind === 'ready'
+                  ? 'Gemini API · พร้อมใช้งาน'
+                  : apiStatus.kind === 'countdown'
+                    ? `Gemini API · เกิน limit — ลองใหม่ใน ${apiStatus.seconds} วินาที`
+                    : apiStatus.kind === 'daily'
+                      ? 'Gemini API · โควต้าหมดวันนี้'
+                      : 'Gemini API · เกิดข้อผิดพลาด'}
+            </span>
+            {apiStatus.kind === 'countdown' ? (
+              <button type="button" onClick={cancelRetry} className="text-xs font-semibold text-amber-300 underline underline-offset-2">
+                ยกเลิก
+              </button>
+            ) : null}
+          </div>
+          {(apiStatus.kind === 'daily' || apiStatus.kind === 'error') ? (
+            <p className="max-w-2xl text-sm leading-6 text-red-200">{apiStatus.message}</p>
+          ) : null}
         </CardHeader>
         <CardContent className="-mt-3 -mb-3 grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
           <div className="rounded-[1.5rem] border border-white/12 bg-[#5c6078] p-4 shadow-lg sm:p-5">
@@ -1247,7 +1319,7 @@ export default function PreProduction({
 
             <Button
               onClick={handleGenerate}
-              disabled={loading || (mode === 'script' && !existingScript.trim())}
+              disabled={loading || apiStatus.kind === 'countdown' || (mode === 'script' && !existingScript.trim())}
               className="sticky bottom-3 z-20 mt-6 h-13 w-full rounded-2xl bg-[#FFAC6F] px-6 text-base font-bold text-white shadow-lg shadow-[#7b57cf]/20 hover:opacity-95 focus-visible:ring-2 focus-visible:ring-[#f0b35a]/80 sm:static"
             >
               {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Sparkles className="mr-2 h-5 w-5" />}

@@ -25,7 +25,13 @@ export interface ScriptRequest {
 async function parseResponse(response: Response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data?.error || 'Request failed.');
+    const error: any = new Error(data?.message || String(data?.error || 'Request failed.'));
+    if (data?.error === 'rate_limit') {
+      error.isRateLimit = true;
+      error.rateLimitKind = data?.kind ?? 'rpm'; // 'rpm' | 'token' | 'daily'
+      error.retryAfterMs = data?.retryAfterMs ?? null;
+    }
+    throw error;
   }
   return data;
 }

@@ -1,5 +1,33 @@
 import { GoogleGenAI, Type } from '@google/genai';
 
+function parseRetryDelaySeconds(error) {
+  const msg = error?.message || String(error);
+  const match = msg.match(/Please retry in\s+([0-9.]+)s/i) || msg.match(/"retryDelay":"(\d+)s"/i);
+  return match ? Math.ceil(Number(match[1])) : null;
+}
+
+function isResourceExhausted(error) {
+  return (error?.message || String(error)).includes('RESOURCE_EXHAUSTED');
+}
+
+function isDailyRateLimit(error) {
+  const msg = error?.message || String(error);
+  return msg.includes('RESOURCE_EXHAUSTED') && (msg.includes('PerDay') || msg.includes('GenerateRequestsPerDay'));
+}
+
+function isTokenRateLimit(error) {
+  const msg = error?.message || String(error);
+  return msg.includes('RESOURCE_EXHAUSTED') && (msg.includes('Token') || msg.includes('TPM') || msg.includes('PerMinutePerProject-token'));
+}
+
+function hoursUntilPacificMidnight() {
+  const now = new Date();
+  const pacificNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const pacificMidnight = new Date(pacificNow);
+  pacificMidnight.setHours(24, 0, 0, 0);
+  return Math.max(1, Math.round((pacificMidnight - pacificNow) / (1000 * 60 * 60)));
+}
+
 const scriptSchema = {
   type: Type.OBJECT,
   properties: {
@@ -124,17 +152,56 @@ export async function handlePreproductionRequest(input) {
   }
 
   const mode = input.body?.mode;
-  let result;
 
-  if (mode === 'brief') {
-    result = await generateScript(input.body?.request || {});
-  } else if (mode === 'script') {
-    result = await breakScriptIntoShots(String(input.body?.scriptText || ''), Number(input.body?.durationSeconds || 30));
-  } else {
-    return { status: 400, body: { error: 'Unsupported mode.' } };
+  try {
+    let result;
+    if (mode === 'brief') {
+      result = await generateScript(input.body?.request || {});
+    } else if (mode === 'script') {
+      result = await breakScriptIntoShots(String(input.body?.scriptText || ''), Number(input.body?.durationSeconds || 30));
+    } else {
+      return { status: 400, body: { error: 'Unsupported mode.' } };
+    }
+    return { status: 200, body: { result } };
+  } catch (error) {
+    if (!isResourceExhausted(error)) throw error;
+
+    if (isDailyRateLimit(error)) {
+      const hours = hoursUntilPacificMidnight();
+      return {
+        status: 429,
+        body: {
+          error: 'rate_limit',
+          kind: 'daily',
+          message: `โควต้ารายวันของ Gemini key หมดแล้ว (ฟรีเทียร์ได้ 250 req/day) จะรีเซ็ตอีกประมาณ ${hours} ชั่วโมง (เที่ยงคืน Pacific time)`,
+        },
+      };
+    }
+
+    const retrySeconds = parseRetryDelaySeconds(error) ?? 60;
+
+    if (isTokenRateLimit(error)) {
+      return {
+        status: 429,
+        body: {
+          error: 'rate_limit',
+          kind: 'token',
+          retryAfterMs: retrySeconds * 1000,
+          message: `ส่ง token เกิน limit ต่อนาที ระบบจะลองใหม่ใน ${retrySeconds} วินาที`,
+        },
+      };
+    }
+
+    return {
+      status: 429,
+      body: {
+        error: 'rate_limit',
+        kind: 'rpm',
+        retryAfterMs: retrySeconds * 1000,
+        message: `เกิน limit ${retrySeconds} req/min ระบบจะลองใหม่ใน ${retrySeconds} วินาที`,
+      },
+    };
   }
-
-  return { status: 200, body: { result } };
 }
 
 export default async function handler(req, res) {
@@ -147,6 +214,6 @@ export default async function handler(req, res) {
     return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Pre-production API error:', error);
-    return res.status(500).json({ error: error.message || 'Unexpected server error.' });
+    return res.status(500).json({ error: 'server_error', message: error.message || 'Unexpected server error.' });
   }
 }
