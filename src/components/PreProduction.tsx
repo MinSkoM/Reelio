@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import JSZip from 'jszip';
-import { breakScriptIntoShots, fetchQuotaStatus, generateScript, GeneratedScript, QuotaSnapshot } from '../services/geminiService';
+import { breakScriptIntoShots, generateScript, GeneratedScript } from '../services/geminiService';
 import { getShotTypeLabel } from '../lib/shotLabels';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Textarea } from './ui/textarea';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
-import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, TimerReset, TriangleAlert, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Download, FileText, Loader2, Clock3, Package2, WandSparkles, Scissors, Sparkles, Camera, Captions, Star, ArrowLeft, CheckCircle2, Library, FolderOpen, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import { getVideosByProject, type VideoRecord } from '../lib/db';
 import { getProgressSummary, getShotProgress, setShotProgress, SHOT_PROGRESS_EVENT } from '../lib/shotProgress';
 
@@ -21,13 +21,6 @@ const LIBRARY_STORAGE_KEY = 'tudtor-script-library';
 
 type Mode = 'brief' | 'script';
 type PageView = 'editor' | 'shot-list' | 'library';
-
-type QuotaStatus = {
-  title: string;
-  statusType: 'ok' | 'temporary' | 'daily';
-  remainingText: string;
-  resetText: string;
-};
 
 type OptionFieldProps = {
   label: string;
@@ -48,33 +41,6 @@ type LibraryItem = {
   createdAt: string;
   script: GeneratedScript;
 };
-
-function quotaToDisplay(quota: QuotaSnapshot): QuotaStatus {
-  if (quota.statusType === 'daily') {
-    return {
-      title: 'ติดโควต้ารายวัน',
-      statusType: 'daily',
-      remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-      resetText: quota.note || `โควต้าจะรีเซ็ตอีกประมาณ ${quota.resetHours || 1} ชั่วโมง`,
-    };
-  }
-
-  if (quota.statusType === 'temporary') {
-    return {
-      title: 'ติดลิมิตชั่วคราว',
-      statusType: 'temporary',
-      remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-      resetText: quota.note || (quota.retryMinutes ? `ลองใหม่อีกครั้งในประมาณ ${quota.retryMinutes} นาที` : 'ลองใหม่อีกครั้งในอีกสักครู่'),
-    };
-  }
-
-  return {
-    title: 'พร้อมใช้งาน',
-    statusType: 'ok',
-    remainingText: `สถานะการใช้งานของอุปกรณ์นี้: ใช้ไป ${quota.used} ครั้ง เหลือ ${quota.remaining} ครั้งในรอบของวันนี้`,
-    resetText: quota.note || 'งานที่สร้างจะถูกเก็บไว้ในเครื่องนี้',
-  };
-}
 
 function buildExportFileBase() {
   const now = new Date();
@@ -254,12 +220,6 @@ export default function PreProduction({
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const [progressVersion, setProgressVersion] = useState(0);
   const [editingScript, setEditingScript] = useState(false);
-  const [quotaStatus, setQuotaStatus] = useState<QuotaStatus>({
-    title: 'กำลังเช็กโควต้า',
-    statusType: 'ok',
-    remainingText: 'กำลังดึงจำนวนคงเหลือของผู้ใช้คนนี้จาก server',
-    resetText: 'ถ้าเพิ่งเปิดหน้าใหม่ รอสักครู่แล้วระบบจะอัปเดตให้เอง',
-  });
 
   const goToEditor = () => {
     setPageView('editor');
@@ -282,27 +242,6 @@ export default function PreProduction({
       return 'editor';
     });
   }, [initialPageView]);
-
-  useEffect(() => {
-    let active = true;
-    fetchQuotaStatus()
-      .then((quota) => {
-        if (!active) return;
-        setQuotaStatus(quotaToDisplay(quota));
-      })
-      .catch(() => {
-        if (!active) return;
-        setQuotaStatus({
-          title: 'เช็กโควต้าไม่สำเร็จ',
-          statusType: 'temporary',
-          remainingText: 'ยังดึงจำนวนคงเหลือของผู้ใช้คนนี้จาก server ไม่สำเร็จ',
-          resetText: 'ตรวจว่า deploy API route และตั้งค่า Supabase env ครบหรือยัง',
-        });
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const effectiveTopic = customTopic.trim() || topic;
   const effectiveDetail = topicDetail.trim();
@@ -461,7 +400,7 @@ export default function PreProduction({
   const handleGenerate = async () => {
     setLoading(true);
     try {
-      const response = mode === 'brief'
+      const nextScript = mode === 'brief'
         ? await generateScript({
             topic: effectiveTopic,
             product: effectiveDetail || undefined,
@@ -474,7 +413,6 @@ export default function PreProduction({
           })
         : await breakScriptIntoShots(existingScript, durationSeconds);
 
-      const nextScript = response.result;
       const libraryItem: LibraryItem = {
         id: typeof window !== 'undefined' && window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}`,
         title: nextScript.title,
@@ -489,12 +427,8 @@ export default function PreProduction({
       setProgressVersion((current) => current + 1);
       persistLibraryItem(libraryItem);
       setPageView('shot-list');
-      setQuotaStatus(quotaToDisplay(response.quota));
     } catch (error: any) {
       const details = error?.message || String(error);
-      if (error?.quota) {
-        setQuotaStatus(quotaToDisplay(error.quota));
-      }
       console.error('AI Error:', error);
       alert(mode === 'brief' ? `สร้างสคริปต์ไม่สำเร็จ: ${details}` : `แตกช็อตจากสคริปต์ไม่สำเร็จ: ${details}`);
     } finally {
@@ -1159,27 +1093,6 @@ export default function PreProduction({
 
   return (
     <div className="mx-auto mt-5 max-w-6xl space-y-5 animate-in fade-in duration-700 sm:mt-8">
-      <div className={`rounded-[1.5rem] p-5 ${quotaStatus.statusType === 'ok' ? 'border border-cyan-300/35 bg-[#2a2d40] text-white shadow-lg shadow-slate-950/30' : 'border border-violet-300/35 bg-slate-900/85 text-white shadow-lg shadow-violet-950/30'}`}>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3">
-            <div className={`rounded-2xl p-2 ${quotaStatus.statusType === 'ok' ? 'bg-[#8d65e7]/18 text-[#efe7ff]' : 'bg-violet-300/20 text-violet-50'}`}>
-              <TriangleAlert className="h-5 w-5" />
-            </div>
-            <div className="space-y-2">
-              <p className={`text-sm font-bold tracking-wide ${quotaStatus.statusType === 'ok' ? 'text-[#e7dcff]' : 'text-violet-100'}`}>สถานะโควต้า</p>
-              <p className="text-2xl font-bold text-white">{quotaStatus.title}</p>
-              <p className={`text-base leading-7 ${quotaStatus.statusType === 'ok' ? 'text-[#efe7ff]' : 'text-violet-50'}`}>{quotaStatus.remainingText}</p>
-              {quotaStatus.resetText ? (
-                <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm ${quotaStatus.statusType === 'ok' ? 'bg-cyan-400/15 text-[#efe7ff]' : 'bg-violet-400/15 text-violet-50'}`}>
-                  <TimerReset className="h-4 w-4" />
-                  {quotaStatus.resetText}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="grid gap-2 rounded-[2rem] border border-[#eadfce] bg-white/65 p-2 shadow-lg shadow-[#7b4a1e]/8 sm:mx-auto sm:w-fit sm:grid-cols-2 sm:rounded-[2.5rem]">
         <button
           type="button"

@@ -1,8 +1,4 @@
 import { GoogleGenAI, Type } from '@google/genai';
-import { createClient } from '@supabase/supabase-js';
-
-const DAILY_REQUEST_LIMIT = Number(process.env.DAILY_REQUEST_LIMIT_PER_USER || 5);
-const TIME_ZONE = 'Asia/Bangkok';
 
 const scriptSchema = {
   type: Type.OBJECT,
@@ -30,26 +26,6 @@ const scriptSchema = {
   },
   required: ['title', 'caption', 'shots'],
 };
-
-function getTodayKey() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: TIME_ZONE });
-}
-
-function getHoursUntilReset() {
-  const now = new Date();
-  const nextReset = new Date(now);
-  nextReset.setHours(24, 0, 0, 0);
-  return Math.max(1, Math.ceil((nextReset.getTime() - now.getTime()) / (1000 * 60 * 60)));
-}
-
-function getSupabaseAdmin() {
-  const url = process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    throw new Error('Supabase admin env is missing. Set VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
-  }
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -138,120 +114,13 @@ async function breakScriptIntoShots(scriptText, durationSeconds) {
   );
 }
 
-function makeQuota(statusType, used, limit, extra = {}) {
-  return {
-    statusType,
-    used,
-    remaining: Math.max(0, limit - used),
-    limit,
-    resetHours: statusType === 'daily' ? getHoursUntilReset() : null,
-    retryMinutes: null,
-    note: null,
-    ...extra,
-  };
-}
-
-function parseGeminiQuotaError(error, currentUsage) {
-  const rawMessage = error?.message || String(error || '');
-  if (!rawMessage.includes('RESOURCE_EXHAUSTED') && !rawMessage.includes('Quota exceeded')) {
-    return null;
-  }
-
-  const quotaValueMatch = rawMessage.match(/"quotaValue":"(\d+)"/i) || rawMessage.match(/limit:\s*(\d+)/i);
-  const quotaValue = quotaValueMatch ? Number(quotaValueMatch[1]) : currentUsage.limit;
-  const isDailyQuota =
-    rawMessage.includes('GenerateRequestsPerDayPerProjectPerModel-FreeTier') ||
-    rawMessage.includes('PerDay') ||
-    rawMessage.includes('daily');
-
-  if (isDailyQuota) {
-    return makeQuota('daily', quotaValue, quotaValue, {
-      note: 'โควต้ารวมของ Gemini key วันนี้หมดแล้ว ทุกคนจะต้องรอรอบรีเซ็ตของคีย์นี้',
-    });
-  }
-
-  const retryMatch =
-    rawMessage.match(/Please retry in\s+([0-9.]+)s/i) ||
-    rawMessage.match(/"retryDelay":"(\d+)s"/i);
-  const retryMinutes = retryMatch ? Math.max(1, Math.ceil(Number(retryMatch[1]) / 60)) : null;
-
-  return makeQuota('temporary', currentUsage.used, currentUsage.limit, {
-    retryMinutes,
-    note: retryMinutes ? `ลองใหม่อีกครั้งในประมาณ ${retryMinutes} นาที` : 'ลองใหม่อีกครั้งในอีกสักครู่',
-  });
-}
-
-function getAnonymousUserId(input) {
-  const bodyValue = typeof input?.body?.anonymousUserId === 'string' ? input.body.anonymousUserId : '';
-  const queryValue = typeof input?.query?.anonymousUserId === 'string' ? input.query.anonymousUserId : '';
-  const candidate = bodyValue || queryValue;
-  if (!candidate || !/^[a-zA-Z0-9_-]{8,80}$/.test(candidate)) {
-    return null;
-  }
-  return candidate;
-}
-
-async function getUsage(admin, userId) {
-  const todayKey = getTodayKey();
-  const { data, error } = await admin
-    .from('anonymous_quota_usage')
-    .select('request_count')
-    .eq('user_key', userId)
-    .eq('usage_date', todayKey)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return {
-    date: todayKey,
-    used: Number(data?.request_count || 0),
-    limit: DAILY_REQUEST_LIMIT,
-  };
-}
-
-async function saveUsage(admin, userId, usage) {
-  const { error } = await admin.from('anonymous_quota_usage').upsert(
-    {
-      user_key: userId,
-      usage_date: usage.date,
-      request_count: usage.used,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_key,usage_date' },
-  );
-
-  if (error) {
-    throw error;
-  }
-}
-
 export async function handlePreproductionRequest(input) {
-  const userId = getAnonymousUserId(input);
-  if (!userId) {
-    return { status: 400, body: { error: 'anonymousUserId is required.' } };
-  }
-
-  const admin = getSupabaseAdmin();
-  const usage = await getUsage(admin, userId);
-
   if (input.method === 'GET') {
-    return { status: 200, body: { quota: makeQuota('ok', usage.used, usage.limit) } };
+    return { status: 200, body: {} };
   }
 
   if (input.method !== 'POST') {
     return { status: 405, body: { error: 'Method not allowed.' } };
-  }
-
-  if (usage.used >= usage.limit) {
-    return {
-      status: 429,
-      body: {
-        error: 'Daily quota reached for this user.',
-        quota: makeQuota('daily', usage.limit, usage.limit),
-      },
-    };
   }
 
   const mode = input.body?.mode;
@@ -265,16 +134,7 @@ export async function handlePreproductionRequest(input) {
     return { status: 400, body: { error: 'Unsupported mode.' } };
   }
 
-  const nextUsage = { ...usage, used: usage.used + 1 };
-  await saveUsage(admin, userId, nextUsage);
-
-  return {
-    status: 200,
-    body: {
-      result,
-      quota: makeQuota('ok', nextUsage.used, nextUsage.limit),
-    },
-  };
+  return { status: 200, body: { result } };
 }
 
 export default async function handler(req, res) {
@@ -287,12 +147,6 @@ export default async function handler(req, res) {
     return res.status(result.status).json(result.body);
   } catch (error) {
     console.error('Pre-production API error:', error);
-
-    const quota = parseGeminiQuotaError(error, { used: 0, limit: DAILY_REQUEST_LIMIT });
-    if (quota) {
-      return res.status(429).json({ error: error.message || 'Quota exceeded.', quota });
-    }
-
     return res.status(500).json({ error: error.message || 'Unexpected server error.' });
   }
 }

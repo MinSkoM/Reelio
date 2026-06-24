@@ -22,76 +22,30 @@ export interface ScriptRequest {
   durationSeconds: number;
 }
 
-export interface QuotaSnapshot {
-  statusType: 'ok' | 'temporary' | 'daily';
-  used: number;
-  remaining: number;
-  limit: number;
-  resetHours: number | null;
-  retryMinutes: number | null;
-  note: string | null;
-}
-
-export interface GeneratedScriptResponse {
-  result: GeneratedScript;
-  quota: QuotaSnapshot;
-}
-
-const ANONYMOUS_USER_STORAGE_KEY = 'tudtor-anonymous-user-id';
-
-function getAnonymousUserId() {
-  if (typeof window === 'undefined') {
-    return 'server-render';
-  }
-
-  const existing = window.localStorage.getItem(ANONYMOUS_USER_STORAGE_KEY);
-  if (existing) return existing;
-
-  const next = window.crypto?.randomUUID?.().replace(/-/g, '') || `user_${Math.random().toString(36).slice(2, 18)}`;
-  window.localStorage.setItem(ANONYMOUS_USER_STORAGE_KEY, next);
-  return next;
-}
-
 async function parseResponse(response: Response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data?.error || 'Request failed.');
-    (error as any).quota = data?.quota || null;
-    throw error;
+    throw new Error(data?.error || 'Request failed.');
   }
   return data;
 }
 
-export async function fetchQuotaStatus(): Promise<QuotaSnapshot> {
-  const userId = getAnonymousUserId();
-  const response = await fetch(`/api/preproduction?anonymousUserId=${encodeURIComponent(userId)}`);
+export async function generateScript(request: ScriptRequest): Promise<GeneratedScript> {
+  const response = await fetch('/api/preproduction', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: 'brief', request }),
+  });
   const data = await parseResponse(response);
-  return data.quota;
+  return data.result;
 }
 
-export async function generateScript(request: ScriptRequest): Promise<GeneratedScriptResponse> {
+export async function breakScriptIntoShots(scriptText: string, durationSeconds: number): Promise<GeneratedScript> {
   const response = await fetch('/api/preproduction', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      mode: 'brief',
-      anonymousUserId: getAnonymousUserId(),
-      request,
-    }),
+    body: JSON.stringify({ mode: 'script', scriptText, durationSeconds }),
   });
-  return parseResponse(response);
-}
-
-export async function breakScriptIntoShots(scriptText: string, durationSeconds: number): Promise<GeneratedScriptResponse> {
-  const response = await fetch('/api/preproduction', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      mode: 'script',
-      anonymousUserId: getAnonymousUserId(),
-      scriptText,
-      durationSeconds,
-    }),
-  });
-  return parseResponse(response);
+  const data = await parseResponse(response);
+  return data.result;
 }
