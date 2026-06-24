@@ -1,81 +1,85 @@
 <div align="center">
-<img width="1200" height="475" alt="Reelio banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+<img width="1200" height="475" alt="Reelio" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
 # Reelio
 
-**AI video workflow for short-form creators**
-
-[![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)](https://react.dev)
-[![Vite](https://img.shields.io/badge/Vite-6-646cff?style=flat-square&logo=vite)](https://vite.dev)
-[![Gemini](https://img.shields.io/badge/Gemini-API-4285f4?style=flat-square&logo=google)](https://ai.google.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
-
-</div>
+An AI-powered video production workflow for short-form creators. Generates a script and shot list from a brief, then syncs a phone camera to the desktop over WebRTC so clips are recorded shot-by-shot and collected for export.
 
 ---
 
-Reelio ช่วยครีเอเตอร์คลิปสั้นวางแผน ถ่าย และ export งานให้ครบในที่เดียว โดยใช้ AI ช่วยคิดสคริปต์ แยกช็อต และบอกว่าแต่ละช็อตต้องถ่ายอะไร จากนั้นเชื่อมมือถือเข้ากับคอมผ่าน QR เพื่อถ่ายและส่งคลิปกลับมาพร้อม export ทันที
+## How it works
 
-## Flow
+| Step | Where | What happens |
+|---|---|---|
+| **1 — Create** | Desktop | Fill in a brief (topic, platform, audience, tone, CTA) or paste an existing script. Gemini generates a full script broken into A-Roll / B-Roll shots with dialogue, on-screen text, and a visual description per shot. |
+| **2 — Shoot** | Desktop + Phone | Desktop generates a QR code. Phone scans it, opens the camera, records each shot, and streams the video back to the desktop over WebRTC. Multiple takes per shot are supported. |
+| **3 — Export** | Desktop | Download a ZIP containing all takes as MP4 files (`shot-01-take-01.mp4`, …) plus an `important-text.srt` subtitle file derived from each shot's on-screen text. |
+
+---
+
+## Architecture
 
 ```
-1. Create  →  กรอก brief หรือวางสคริปต์เดิม → AI สร้างสคริปต์ + ช็อตลิสต์
-2. Shoot   →  มือถือสแกน QR → เปิดกล้อง → ถ่ายตามช็อต → ส่งคลิปกลับเข้าคอม
-3. Export  →  ดาวน์โหลด ZIP (MP4 ทุก take + ไฟล์ .srt subtitle)
+Browser — Desktop (React + TypeScript + Vite)
+  ├── PreProduction          — brief form, AI generation, shot list editor, project library
+  ├── ProductionStudio       — PeerJS host, QR display, shot selector, received-clip list
+  └── IndexedDB (idb)        — local video blob storage
+
+Browser — Phone
+  └── MobileProduction       — PeerJS client, camera capture, shot-by-shot recording UI
+
+API Routes (Express / Vite dev server)
+  ├── POST /api/preproduction — Gemini script generation (brief → shots, or script → shots)
+  └── POST /api/convert-video — server-side WebM → MP4 conversion for non-Safari browsers
+
+AI
+  └── Google Gemini           — structured JSON output: title, caption, shots[]
+                                each shot: type, script_text, on_screen_text,
+                                visual_description, duration_seconds
 ```
 
-## Features
+---
 
-- **AI Script & Shot List** — ใส่แค่ brief สั้น ๆ แล้วให้ Gemini สร้างสคริปต์ แยก A-Roll / B-Roll ระบุ visual ที่ต้องถ่าย และเขียน caption พร้อมโพสต์
-- **Wireless Camera** — เชื่อมมือถือกับคอมผ่าน WebRTC (PeerJS) + QR code ไม่ต้องติดตั้ง app
-- **One-device mode** — ถ่ายบนเครื่องเดียวโดยไม่ต้องสแกน QR สำหรับเครื่องที่มีกล้อง
-- **Project Library** — บันทึกทุกงานลง localStorage พร้อมแสดงความคืบหน้าการถ่ายแต่ละช็อต
-- **Export ZIP** — รวมคลิปทุก take เป็น MP4 (แปลงจาก WebM อัตโนมัติ) + `important-text.srt`
-- **Rate limit handling** — แสดงสถานะ API แบบ real-time พร้อม auto-retry เมื่อเกิน RPM limit
+## Setup
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | React 19 · TypeScript · Vite 6 · Tailwind CSS v4 |
-| AI | Google Gemini API (`@google/genai`) |
-| Camera sync | PeerJS (WebRTC) |
-| Video storage | IndexedDB (`idb`) |
-| Export | JSZip · server-side WebM → MP4 |
-| UI | shadcn/ui · lucide-react · motion |
-
-## Run Locally
-
-**Prerequisites:** Node.js, Gemini API key
+**Prerequisites:** Node.js, a [Gemini API key](https://aistudio.google.com/apikey)
 
 ```bash
-# 1. Install dependencies
 npm install
+```
 
-# 2. Set your Gemini API key
-echo "GEMINI_API_KEY=your_key_here" > .env.local
+Set your API key in `.env.local`:
 
-# 3. Start dev server
+```
+GEMINI_API_KEY=your_key_here
+```
+
+Start the dev server:
+
+```bash
 npm run dev
 ```
 
-App runs at `http://localhost:3000`  
-Mobile camera page: `http://<your-local-ip>:3000/?mode=mobile&session=<id>`
+App runs at `http://localhost:3000`.
+For the phone camera flow, open `http://<local-ip>:3000` on the same Wi-Fi network and scan the QR shown on the desktop.
 
-## Project Structure
+---
 
-```
-src/
-├── components/
-│   ├── PreProduction.tsx    # Script generation + shot list + library
-│   ├── ProductionStudio.tsx # Desktop control center (PeerJS host)
-│   └── MobileProduction.tsx # Mobile camera (PeerJS client)
-├── services/
-│   └── geminiService.ts     # Gemini API calls
-└── lib/
-    ├── db.ts                # IndexedDB video storage
-    └── shotProgress.ts      # Shot completion tracking
-api/
-├── preproduction.js         # Gemini script generation endpoint
-└── convert-video.js         # WebM → MP4 conversion endpoint
-```
+## Tech stack
+
+- **React 19** + **TypeScript** + **Vite 6** + **Tailwind CSS v4**
+- **Google Gemini API** (`@google/genai`) — script and shot list generation
+- **PeerJS** (WebRTC) — peer-to-peer video transfer between phone and desktop
+- **idb** — IndexedDB wrapper for local video blob storage
+- **JSZip** — client-side ZIP packaging for export
+- **shadcn/ui** + **lucide-react** — UI components and icons
+
+---
+
+## Notes
+
+- All project data (scripts, shot progress, video blobs) is stored locally in the browser — no cloud storage.
+- When the phone records in WebM (non-Safari), the desktop converts it to MP4 server-side via `/api/convert-video` before packaging the ZIP.
+- The Gemini free tier allows 10 RPM and 250 requests per day. The app classifies rate limit errors (RPM vs. daily quota) and auto-retries with a countdown when the limit is temporary.
+- On small screens or with `?mode=one-device` in the URL, the app runs in single-device mode — camera and shot list on the same screen, no QR required.
