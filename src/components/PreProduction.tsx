@@ -1186,14 +1186,14 @@ export default function PreProduction({
             }`} />
             <span className="text-sm font-semibold text-slate-200">
               {loading
-                ? 'Gemini API · กำลังสร้าง...'
+                ? 'กำลังสร้าง...'
                 : apiStatus.kind === 'ready'
-                  ? 'Gemini API · พร้อมใช้งาน'
+                  ? 'พร้อมใช้งาน'
                   : apiStatus.kind === 'countdown'
-                    ? `Gemini API · เกิน limit — ลองใหม่ใน ${apiStatus.seconds} วินาที`
+                    ? `เกิน limit — ลองใหม่ใน ${apiStatus.seconds} วินาที`
                     : apiStatus.kind === 'daily'
-                      ? 'Gemini API · โควต้าหมดวันนี้'
-                      : 'Gemini API · เกิดข้อผิดพลาด'}
+                      ? 'โควต้าหมดวันนี้'
+                      : 'เกิดข้อผิดพลาด'}
             </span>
             {apiStatus.kind === 'countdown' ? (
               <button type="button" onClick={cancelRetry} className="text-xs font-semibold text-amber-300 underline underline-offset-2">
